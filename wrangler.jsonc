@@ -6,6 +6,12 @@
   "observability": { "enabled": true },
   // Pyyntöjen sisältöä ei tallenneta. Välimuisti: Cloudflaren Cache API.
   "workers_dev": true,
+  // Sotkanet-tiedot (THL) eränä D1-kantaan, EU-lainkäyttöalue. Ks. src/sotkanet.js.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "aluetieto-sotkanet", "database_id": "06e14d0b-96cc-4a84-b0cb-df0d9a15a5e1" }
+  ],
+  // Yksi päivitysaskel 15 minuutin välein; tekee THL:lle hakuja vain, kun jokin on vanhentunut (7 vrk).
+  "triggers": { "crons": ["*/15 * * * *"] },
   // Käyttörajoitus työkalukutsuille (ks. src/index.js). period: 10 tai 60 sekuntia.
   "ratelimits": [
     { "name": "SESSION_LIMITER", "namespace_id": "1201", "simple": { "limit": 30, "period": 60 } },

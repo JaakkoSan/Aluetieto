@@ -14,6 +14,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - Ei tallennusta. Välimuisti vain Cloudflaren Cache API:ssa.
 - Toimialaluokitus TOL 2025 mukana koodissa (YTJ käyttää TOL 2025 -koodeja 1.1.2026 alkaen).
 - Toiminimien puuttuminen YTJ:n avoimesta datasta kerrotaan jokaisessa yritysmäärätulosteessa.
+- Sotkanet haetaan eränä D1:een (EU), koska THL:n ohje ei tarkoita rajapintaa suoraan online-käyttöön (päätös 31.10.2026). D1: aluetieto-sotkanet.
 
 ## Rakenne
 
@@ -23,8 +24,10 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/stat.js`: Paavo ja toimipaikkatilasto (PxWeb)
 - `src/http.js`: HTTP, välimuisti, alipyyntöbudjetti
 - `src/tol2025.js`: toimialaluokitus
+- `src/sotkanet.js`: Sotkanet-eräpäivitys (cron) ja D1-luku
 - `test/smoke.mjs`: savutesti
 
 ## Muutokset
 
 - 31.10.2026 v1.0: ensimmäinen versio.
+- 31.10.2026 v1.1: Sotkanet-indikaattorit (sote_indikaattorit, sote_tilasto), eräpäivitys D1:een.

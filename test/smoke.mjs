@@ -22,7 +22,7 @@ function check(cond, label) {
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
 check(init.result?.serverInfo?.name === "aluetieto", "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 6 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (6, readOnlyHint)");
+check(list.result?.tools?.length === 8 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (8, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -36,6 +36,8 @@ const cases = [
   ["aluetarkistus", { toimiala: "kotihoito", postinumerot: ["48100", "48600", "49220"], kohderyhma: "75+" }, (t) => t.includes("88101")],
   ["toimipaikat_maakunnittain", { toimiala: "96", maakunta: "Kymenlaakso" }, (t) => t.includes("Kymenlaakso") && /\d/.test(t)],
   ["aluetarkistus", { toimiala: "962", kunta: "Helsinki" }, (t) => t.includes("enintään")],
+  // Sotkanet lukee D1:stä; Node-testissä kantaa ei ole, joten odotetaan selkeä ilmoitus.
+  ["sote_indikaattorit", {}, (t) => t.includes("ei ole kytketty")],
 ];
 for (const [name, args, pred] of cases) {
   const t0 = Date.now();

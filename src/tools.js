@@ -17,6 +17,7 @@ import {
 } from "./ytj.js";
 import { postAreas, areasOfMunicipality, population, establishments, establishmentsMeta } from "./stat.js";
 import { TOL2025 } from "./tol2025.js";
+import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -127,6 +128,29 @@ export const TOOLS = [
       required: ["toimiala"],
     },
   },
+  {
+    name: "sote_indikaattorit",
+    description:
+      "Listaa Sotkanetista (THL) ladatut sote- ja väestöindikaattorit: tunnus, nimi, tuottaja, yksikkö, vuodet ja päivityspäivä. Mukana mm. säännöllisen kotihoidon asiakasosuudet ikäryhmittäin, kotona asuvat ja yksinasuvat 75 vuotta täyttäneet, omaishoidon tuki, ympärivuorokautinen palveluasuminen, ikärakenne ja väestöennusteet 2030 ja 2040.",
+    inputSchema: {
+      type: "object",
+      properties: { hakusana: { type: "string", description: "Rajaa nimen osalla (valinnainen)." } },
+    },
+  },
+  {
+    name: "sote_tilasto",
+    description:
+      "Palauttaa yhden Sotkanet-indikaattorin arvot kunnille, hyvinvointialueille tai maakunnille vuosittain (enintään 6 viimeisintä vuotta) sekä vertailuksi koko maan arvon. Anna indikaattorin tunnus tai nimen osa ja alueiden nimet, esim. [\"Kotka\", \"Pyhtää\", \"Kymenlaakson hyvinvointialue\"].",
+    inputSchema: {
+      type: "object",
+      properties: {
+        indikaattori: { type: "string", description: "Indikaattorin tunnus (esim. \"5513\") tai nimen osa." },
+        alueet: { type: "array", items: { type: "string" }, description: "Alueiden nimet: kunta, hyvinvointialue, maakunta tai seutukunta." },
+        vuodet: { type: "array", items: { type: "integer" }, description: "Rajaa vuosiin (valinnainen)." },
+      },
+      required: ["indikaattori", "alueet"],
+    },
+  },
 ];
 
 const TITLES = {
@@ -136,6 +160,8 @@ const TITLES = {
   alueen_vaesto: "Alueen väestö (Paavo)",
   aluetarkistus: "Aluetarkistus",
   toimipaikat_maakunnittain: "Toimipaikat maakunnittain",
+  sote_indikaattorit: "Sote-indikaattorit (Sotkanet)",
+  sote_tilasto: "Sote-tilasto alueittain (Sotkanet)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -452,6 +478,77 @@ async function toimipaikatMaakunnittain(args) {
   return clip(lines.join("\n"));
 }
 
+// ---------- Sotkanet (luetaan D1:stä, ei suoria hakuja THL:lle) ----------
+
+function needDb(env) {
+  if (!env?.DB) throw new UserError("Sotkanet-tietokantaa ei ole kytketty tähän palvelimeen.");
+  return env.DB;
+}
+
+async function soteIndikaattorit(args, env) {
+  const db = needDb(env);
+  let rows = await listIndicators(db);
+  if (!rows.length) return "Indikaattoreita ei ole vielä ladattu. Ajastettu päivitys hakee ne Sotkanetista vähitellen (yksi indikaattori kerrallaan).";
+  if (args.hakusana) {
+    const q = String(args.hakusana).toLowerCase();
+    rows = rows.filter((r) => String(r.title ?? "").toLowerCase().includes(q));
+  }
+  const lines = rows.map((r) => {
+    const loaded = r.row_count ? "" : " (ei vielä ladattu)";
+    return `${r.id} ${r.title ?? "?"} | ${r.organization ?? "?"} | ${r.unit ?? ""} | vuodet ${r.range_start ?? "?"}–${r.range_end ?? "?"} | päivitetty ${fmtDate(r.data_updated)}${loaded}`;
+  });
+  return clip(
+    `Sotkanet-indikaattorit (${rows.length}):\n` +
+      lines.join("\n") +
+      "\n\nHae arvot työkalulla sote_tilasto. Tietokantaan on tallennettu kuusi viimeisintä vuotta.\nLähde: THL, Sotkanet.fi. Tiedot päivitetään viikoittain eränä.",
+  );
+}
+
+async function soteTilasto(args, env) {
+  const db = needDb(env);
+  const ind = await findIndicator(db, args.indikaattori);
+  if (!ind) throw new UserError(`Indikaattoria "${args.indikaattori}" ei löytynyt ladatuista. Katso sote_indikaattorit.`);
+  if (ind.ambiguous) {
+    return "Useita osumia, tarkenna tunnuksella:\n" + ind.ambiguous.map((r) => `${r.id} ${r.title}`).join("\n");
+  }
+  if (!ind.row_count) throw new UserError(`Indikaattoria ${ind.id} ei ole vielä ladattu. Ajastettu päivitys hakee sen pian.`);
+  const names = (args.alueet ?? []).map(String).filter(Boolean);
+  if (!names.length) throw new UserError("Anna vähintään yksi alue.");
+  if (names.length > 30) throw new UserError("Enintään 30 aluetta kerralla.");
+  const { regions, missing } = await findRegions(db, names);
+  const country = await countryRegion(db);
+  const all = [...regions];
+  if (country && !all.some((r) => r.id === country.id)) all.push(country);
+  const years = Array.isArray(args.vuodet) && args.vuodet.length ? args.vuodet.map(Number).filter(Number.isInteger) : null;
+  const rows = await soteValues(db, ind.id, all.map((r) => r.id), years);
+  const yearList = [...new Set(rows.map((r) => r.year))].sort();
+  const dec = Number.isInteger(ind.decimals) ? ind.decimals : 1;
+  const nfDec = new Intl.NumberFormat("fi-FI", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  const cell = (r) => {
+    if (!r || r.value === null) return "–";
+    const v = nfDec.format(r.value);
+    return r.abs_value !== null && r.abs_value !== undefined && r.abs_value !== r.value ? `${v} (${fmt(r.abs_value)})` : v;
+  };
+  const lines = [
+    `${ind.title} [${ind.id}]`,
+    `Tuottaja: ${ind.organization ?? "?"}. Yksikkö: ${ind.unit ?? "?"}. Suluissa absoluuttinen määrä, jos se on saatavilla.`,
+    "",
+    `Alue | ${yearList.join(" | ")}`,
+  ];
+  for (const r of all) {
+    const byYear = new Map(rows.filter((x) => x.region === r.id).map((x) => [x.year, x]));
+    lines.push(`${r.title} (${categoryLabel(r.category)}) | ${yearList.map((y) => cell(byYear.get(y))).join(" | ")}`);
+  }
+  if (missing.length) lines.push("", `Alueita ei löytynyt: ${missing.join(", ")}. Käytä virallista nimeä, esim. "Kymenlaakson hyvinvointialue".`);
+  if (ind.description) lines.push("", `Kuvaus: ${ind.description.slice(0, 600)}${ind.description.length > 600 ? "…" : ""}`);
+  if (ind.limits) lines.push(`Rajoitukset: ${ind.limits.slice(0, 400)}${ind.limits.length > 400 ? "…" : ""}`);
+  lines.push(
+    "",
+    `Lähde: THL, Sotkanet.fi, indikaattori ${ind.id}; tiedontuottaja ${ind.organization ?? "?"}. Tiedot päivitetty Sotkanetissa ${fmtDate(ind.data_updated)}, haettu ${fmtDate(ind.last_loaded)}.`,
+  );
+  return clip(lines.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -459,13 +556,15 @@ const HANDLERS = {
   alueen_vaesto: alueenVaesto,
   aluetarkistus,
   toimipaikat_maakunnittain: toimipaikatMaakunnittain,
+  sote_indikaattorit: soteIndikaattorit,
+  sote_tilasto: soteTilasto,
 };
 
-export async function callTool(name, args = {}) {
+export async function callTool(name, args = {}, env = {}) {
   const fn = HANDLERS[name];
   if (!fn) return { isError: true, content: [{ type: "text", text: `Tuntematon työkalu: ${name}` }] };
   try {
-    const text = await fn(args ?? {});
+    const text = await fn(args ?? {}, env);
     return { content: [{ type: "text", text }] };
   } catch (e) {
     const msg =
