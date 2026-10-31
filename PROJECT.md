@@ -21,6 +21,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/index.js`: MCP-protokolla ja käyttörajoitus
 - `src/tools.js`: työkalut
 - `src/ytj.js`: YTJ-haku ja tulkinta
+- `src/talous.js`: hintaindeksit (Tilastokeskus, StatFin/khi) ja korot (EKP:n rajapinta, korkolain viitekorko)
 - `src/stat.js`: Paavo ja toimipaikkatilasto (PxWeb)
 - `src/http.js`: HTTP, välimuisti, alipyyntöbudjetti
 - `src/tol2025.js`: toimialaluokitus
@@ -33,3 +34,4 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - 31.10.2026 v1.1: Sotkanet-indikaattorit (sote_indikaattorit, sote_tilasto), eräpäivitys D1:een.
 - 31.10.2026 v1.1.1: Sotkanet-lataus yksi vuosi per ajo (ilmaistason 10 ms CPU-raja).
 - 31.10.2026 v1.1.2: Tilastokeskuksen metatiedot (Paavo, toimipaikat) käsitellään kerran isolaattia kohden; postinumerot puretaan vasta tarvittaessa (CPU-aika aluetarkistuksessa noin kolmannes aiemmasta).
+- 31.10.2026 v1.2: hintaindeksi, indeksitarkistus (Tilastokeskus, kuluttajahinta- ja elinkustannusindeksi) ja korot (korkolain viitekorko ja viivästyskorot EKP:n perusrahoitusoperaatioiden korosta, EKP:n ohjauskorot). Euribor jätetty pois lisenssin vuoksi (Refinitivin data EKP:n rajapinnassa).

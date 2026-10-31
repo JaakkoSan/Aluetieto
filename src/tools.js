@@ -17,6 +17,7 @@ import {
 } from "./ytj.js";
 import { postAreas, areasOfMunicipality, population, establishments, establishmentsMeta } from "./stat.js";
 import { TOL2025 } from "./tol2025.js";
+import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yearBefore, ecbRates, rateOn, referenceRate, periodStart, periodEnd, FIRST_REFERENCE_PERIOD } from "./talous.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
@@ -151,6 +152,48 @@ export const TOOLS = [
       required: ["indikaattori", "alueet"],
     },
   },
+  {
+    name: "hintaindeksi",
+    description:
+      "Kuluttajahintaindeksin tai elinkustannusindeksin pisteluvut ja vuosimuutos kuukausittain (Tilastokeskus). Oletuksena viimeiset 13 kuukautta. Inflaatio, hintojen nousu, indeksisidonnaiset sopimukset.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        indeksi: { type: "string", enum: ["khi", "elinkustannus"], description: "khi = kuluttajahintaindeksi (oletus), elinkustannus = elinkustannusindeksi 1951:10=100." },
+        perusvuosi: { type: "string", description: "Kuluttajahintaindeksin perusvuosi: 2015 (oletus), 2025, 2010, 2005, 2000, 1995 … 1972." },
+        alkaen: { type: "string", description: "Ensimmäinen kuukausi (VVVV-KK). Valinnainen." },
+        paattyen: { type: "string", description: "Viimeinen kuukausi (VVVV-KK). Oletus: viimeisin julkaistu." },
+      },
+    },
+  },
+  {
+    name: "indeksitarkistus",
+    description:
+      "Laskee indeksitarkistuksen (esim. vuokran tai sopimushinnan korotus) kuluttajahinta- tai elinkustannusindeksillä: pisteluvut lähtö- ja tarkistusajankohtana, muutosprosentti, kerroin ja tarkistettu summa.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        indeksi: { type: "string", enum: ["khi", "elinkustannus"], description: "khi = kuluttajahintaindeksi (oletus), elinkustannus = elinkustannusindeksi 1951:10=100." },
+        perusvuosi: { type: "string", description: "Kuluttajahintaindeksin perusvuosi, esim. 2015 (oletus) tai 2010." },
+        lahtokohta: { type: "string", description: "Perusindeksin ajankohta: kuukausi (VVVV-KK, esim. \"2024-03\") tai vuosi (VVVV, vuosikeskiarvo)." },
+        tarkistus: { type: "string", description: "Tarkistusajankohta samassa muodossa. Oletus: viimeisin julkaistu." },
+        summa: { type: "number", description: "Tarkistettava summa, esim. nykyinen vuokra. Valinnainen." },
+      },
+      required: ["lahtokohta"],
+    },
+  },
+  {
+    name: "korot",
+    description:
+      "Korkolain viitekorko ja viivästyskorot (tavallinen ja kaupallisten sopimusten) annettuna päivänä sekä EKP:n ohjauskorot (talletuskorko, perusrahoitusoperaatiot, maksuvalmiusluotto). Valinnaisesti viitekorkojen historia puolivuosittain vuodesta 2009.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        paiva: { type: "string", description: "Päivä (VVVV-KK-PP). Oletus: tänään." },
+        historia: { type: "boolean", description: "true = myös viitekorot puolivuosittain." },
+      },
+    },
+  },
 ];
 
 const TITLES = {
@@ -162,6 +205,9 @@ const TITLES = {
   toimipaikat_maakunnittain: "Toimipaikat maakunnittain",
   sote_indikaattorit: "Sote-indikaattorit (Sotkanet)",
   sote_tilasto: "Sote-tilasto alueittain (Sotkanet)",
+  hintaindeksi: "Kuluttajahinta- ja elinkustannusindeksi",
+  indeksitarkistus: "Indeksitarkistus",
+  korot: "Viitekorko, viivästyskorko ja EKP:n korot",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -559,6 +605,140 @@ async function soteTilasto(args, env) {
   return clip(lines.join("\n"));
 }
 
+// ---------- Hintaindeksit ja korot ----------
+
+const fmtDec = (n, d = 2) => {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "–";
+  const neg = n < 0;
+  const [i, f] = Math.abs(n).toFixed(d).split(".");
+  return (neg ? "−" : "") + i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (f ? "," + f : "");
+};
+const KHI_SOURCE = "Lähde: Tilastokeskus, kuluttajahintaindeksi (CC BY 4.0), https://stat.fi/tilasto/khi";
+
+function resolveSeries(args) {
+  const kind = String(args.indeksi ?? "khi").trim().toLowerCase().replace("kuluttajahintaindeksi", "khi").replace("elinkustannusindeksi", "elinkustannus");
+  const info = seriesInfo(kind, args.perusvuosi);
+  if (!info) throw new UserError('indeksi: "khi" (kuluttajahintaindeksi) tai "elinkustannus" (elinkustannusindeksi 1951:10=100).');
+  if (info.error) throw new UserError(info.error);
+  return info;
+}
+
+async function hintaindeksi(args) {
+  const info = resolveSeries(args);
+  const budget = newBudget(6);
+  const { values, updated } = await indexSeries(info, false, budget);
+  const periods = [...values.keys()];
+  const latest = periods.at(-1);
+  let from = args.alkaen ? parsePeriod(args.alkaen) : null;
+  let to = args.paattyen ? parsePeriod(args.paattyen) : latest;
+  if ((args.alkaen && !/M/.test(from ?? "")) || (args.paattyen && !/M/.test(to ?? ""))) throw new UserError('Anna kuukausi muodossa VVVV-KK, esim. "2025-09".');
+  if (!from) {
+    const i = Math.max(0, periods.indexOf(to) - 12);
+    from = periods[i];
+  }
+  const rows = periods.filter((p) => p >= from && p <= to);
+  if (!rows.length) throw new UserError(`Ei tietoja väliltä ${periodLabel(from)}–${periodLabel(to)}. Sarja alkaa ${periodLabel(periods[0])} ja viimeisin on ${periodLabel(latest)}.`);
+  if (rows.length > 240) throw new UserError("Väli on liian pitkä (yli 240 kuukautta). Rajaa alkaen- ja paattyen-kuukausilla.");
+  let official = null;
+  if (info.kind === "khi") official = (await khiAnnualChange(budget)).values;
+  const out = [`${info.name} (${info.label}), kuukausittain ${periodLabel(rows[0])}–${periodLabel(rows.at(-1))}. Viimeisin julkaistu kuukausi: ${periodLabel(latest)}.`];
+  out.push("", "Kuukausi | Pisteluku | Vuosimuutos %");
+  for (const p of rows) {
+    const prev = values.get(yearBefore(p));
+    const change = official?.get(p) ?? (prev ? (values.get(p) / prev - 1) * 100 : null);
+    out.push(`${periodLabel(p)} | ${fmtDec(values.get(p))} | ${change === null ? "–" : fmtDec(change, 1)}`);
+  }
+  out.push(
+    "",
+    info.kind === "khi"
+      ? "Vuosimuutos on Tilastokeskuksen virallinen kuluttajahintaindeksin vuosimuutos (taulukko 122p), joka on sama kaikilla perusvuosilla."
+      : "Vuosimuutos on laskettu pisteluvuista (12 kuukauden muutos).",
+    `${KHI_SOURCE}. Taulukko päivitetty ${updated ? fmtDate(updated) : "?"}.`,
+  );
+  return clip(out.join("\n"));
+}
+
+async function indeksitarkistus(args) {
+  const info = resolveSeries(args);
+  const fromP = parsePeriod(args.lahtokohta);
+  if (!fromP) throw new UserError('Anna lahtokohta kuukautena (VVVV-KK, esim. "2024-03") tai vuotena (VVVV, vuosikeskiarvo).');
+  const yearly = !/M/.test(fromP);
+  let toP = args.tarkistus ? parsePeriod(args.tarkistus) : null;
+  if (args.tarkistus && (!toP || /M/.test(toP) === yearly)) throw new UserError("Anna tarkistusajankohta samassa muodossa kuin lähtökohta (molemmat kuukausia tai molemmat vuosia).");
+  const series = await indexSeries(info, yearly, newBudget(4));
+  if (!series) throw new UserError(`Vuosikeskiarvoja ei ole perusvuodelle ${info.base}. Käytä kuukausia tai toista perusvuotta (esim. 2015).`);
+  const { values } = series;
+  const latest = [...values.keys()].at(-1);
+  toP ??= latest;
+  const a = values.get(fromP);
+  const b = values.get(toP);
+  if (a === undefined) throw new UserError(`Pistelukua ei löydy ajankohdalle ${periodLabel(fromP)} (${info.label}). Sarjan viimeisin: ${periodLabel(latest)}.`);
+  if (b === undefined) throw new UserError(`Pistelukua ei löydy ajankohdalle ${periodLabel(toP)} (${info.label}). Viimeisin julkaistu: ${periodLabel(latest)}.`);
+  const ratio = b / a;
+  const out = [`Indeksitarkistus: ${info.label}${yearly ? " (vuosikeskiarvot)" : ""}`];
+  out.push(`Lähtökohta ${periodLabel(fromP)}: ${fmtDec(a)}`);
+  out.push(`Tarkistus ${periodLabel(toP)}: ${fmtDec(b)}${!args.tarkistus ? " (viimeisin julkaistu)" : ""}`);
+  out.push(`Muutos: ${fmtDec((ratio - 1) * 100, 2)} % (kerroin ${ratio.toFixed(4).replace(".", ",")})`);
+  const sum = Number(String(args.summa ?? "").replace(/\s/g, "").replace(",", "."));
+  if (args.summa !== undefined && args.summa !== null && args.summa !== "") {
+    if (!Number.isFinite(sum)) throw new UserError("Anna summa numerona, esim. 850 tai 850,50.");
+    out.push(`Summa ${fmtDec(sum)} → ${fmtDec(sum * ratio)} (muutos ${fmtDec(sum * ratio - sum)})`);
+  }
+  out.push(
+    "",
+    "Laskenta: uusi summa = summa × tarkistuksen pisteluku / lähtökohdan pisteluku. Tarkista sopimuksesta indeksi, perusvuosi, tarkistuskuukausi sekä mahdolliset rajat (esim. vähimmäiskorotus tai korotuksen vain ylöspäin). Pisteluvut ovat Tilastokeskuksen julkaisemia pyöristettyjä lukuja.",
+    KHI_SOURCE + ".",
+  );
+  return clip(out.join("\n"));
+}
+
+async function korot(args) {
+  const d = args.paiva ? String(args.paiva).trim() : new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new UserError('Anna päivä muodossa VVVV-KK-PP, esim. "2026-10-31".');
+  const { mro, dfr, mlf } = await ecbRates();
+  const out = [`Korot ${fmtDate(d)}`];
+  const start = periodStart(d);
+  if (start < FIRST_REFERENCE_PERIOD) {
+    out.push("", "Viitekorkoa ennen vuotta 2009 ei lasketa (EKP:n perusrahoitusoperaatiot olivat vaihtuvakorkoisia 2000–2008). Katso Suomen Pankin julkaisemat viitekorot.");
+  } else {
+    const ref = referenceRate(mro, start);
+    if (ref) {
+      out.push(
+        "",
+        `Korkolain viitekorko ${fmtDate(start)}–${fmtDate(periodEnd(start))}: ${fmtDec(ref.rate, 1)} %`,
+        `  (EKP:n perusrahoitusoperaatioiden korko ennen kauden alkua ${fmtDec(ref.mro)} %, voimassa ${fmtDate(ref.mroDate)} alkaen, pyöristettynä ylöspäin puoleen prosenttiyksikköön; korkolaki 633/1982 12 §)`,
+        `Viivästyskorko: ${fmtDec(ref.rate + 7, 1)} % (viitekorko + 7 prosenttiyksikköä, korkolaki 4 §)`,
+        `Viivästyskorko kaupallisissa sopimuksissa: ${fmtDec(ref.rate + 8, 1)} % (viitekorko + 8 prosenttiyksikköä, korkolaki 4 a §)`,
+      );
+    }
+  }
+  const cur = (list) => rateOn(list, d);
+  const lines = [
+    ["Talletuskorko", cur(dfr)],
+    ["Perusrahoitusoperaatioiden korko", cur(mro)],
+    ["Maksuvalmiusluoton korko", cur(mlf)],
+  ].filter(([, r]) => r);
+  if (lines.length) {
+    out.push("", "EKP:n ohjauskorot:");
+    for (const [name, r] of lines) out.push(`- ${name}: ${fmtDec(r.value)} % (${fmtDate(r.date)} alkaen)`);
+  }
+  if (args.historia) {
+    out.push("", "Viitekorot puolivuosittain (uusin ensin):");
+    const starts = [];
+    for (let y = +d.slice(0, 4); y >= 2009; y--) for (const m of ["07", "01"]) if (`${y}-${m}-01` <= start) starts.push(`${y}-${m}-01`);
+    for (const s of starts.slice(0, 40)) {
+      const r = referenceRate(mro, s);
+      if (r) out.push(`- ${fmtDate(s)}–${fmtDate(periodEnd(s))}: ${fmtDec(r.rate, 1)} %`);
+    }
+  }
+  out.push(
+    "",
+    "Viitekorko on laskettu EKP:n julkaisemasta korosta korkolain 12 §:n mukaan; Suomen Pankki julkaisee virallisen viitekoron. Viivästyskorko voi sopimuksen tai korkolain 4 §:n 2 momentin perusteella olla toinen.",
+    "Lähde: EKP:n tilastot (Source: ECB statistics), data-api.ecb.europa.eu. Euribor-korot eivät ole mukana, koska ne ovat kolmannen osapuolen lisensoimaa dataa.",
+  );
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -568,6 +748,9 @@ const HANDLERS = {
   toimipaikat_maakunnittain: toimipaikatMaakunnittain,
   sote_indikaattorit: soteIndikaattorit,
   sote_tilasto: soteTilasto,
+  hintaindeksi,
+  indeksitarkistus,
+  korot,
 };
 
 export async function callTool(name, args = {}, env = {}) {

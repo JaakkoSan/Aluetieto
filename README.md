@@ -1,6 +1,6 @@
 # aluetieto-mcp
 
-Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokeskuksen Paavo-väestötiedot ja THL:n Sotkanet-indikaattorit. Tarkoitettu aluetarkistuksiin: montako saman toimialan yritystä alueella on suhteessa asukkaisiin tai kohderyhmään. Toimii Cloudflare Workerina, ei tallenna mitään eikä tarvitse API-avaimia.
+Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokeskuksen Paavo-väestötiedot ja THL:n Sotkanet-indikaattorit. Lisäksi kuluttajahinta- ja elinkustannusindeksi, indeksitarkistuslaskuri sekä korkolain viitekorko, viivästyskorot ja EKP:n ohjauskorot. Tarkoitettu aluetarkistuksiin: montako saman toimialan yritystä alueella on suhteessa asukkaisiin tai kohderyhmään. Toimii Cloudflare Workerina, ei tallenna mitään eikä tarvitse API-avaimia.
 
 ## Työkalut
 
@@ -14,6 +14,9 @@ Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokes
 | `toimipaikat_maakunnittain` | Tilastokeskuksen toimipaikkatilasto (myös toiminimet) maakunnittain, TOL 2008 |
 | `sote_indikaattorit` | Ladatut Sotkanet-indikaattorit (kotihoito, ikääntyneiden palvelut, ikärakenne, väestöennusteet) |
 | `sote_tilasto` | Indikaattorin arvot kunnittain, hyvinvointialueittain tai maakunnittain, 6 viimeisintä vuotta, vertailuna koko maa |
+| `hintaindeksi` | Kuluttajahintaindeksin (perusvuosi valittavissa) tai elinkustannusindeksin (1951:10=100) pisteluvut ja vuosimuutos kuukausittain |
+| `indeksitarkistus` | Indeksitarkistus kahden kuukauden tai vuosikeskiarvon välillä: muutosprosentti, kerroin ja tarkistettu summa (esim. vuokra) |
+| `korot` | Korkolain viitekorko ja viivästyskorot (4 ja 4 a §) annettuna päivänä, EKP:n ohjauskorot, viitekorkojen historia vuodesta 2009 |
 
 ## Tärkeä rajoitus
 
@@ -24,6 +27,9 @@ YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, 
 - YTJ: `https://avoindata.prh.fi/opendata-ytj-api/v3/companies` (Patentti- ja rekisterihallitus). PRH:n ehto: alkuperäinen lähde mainitaan, eikä palvelussa käytetä PRH:n tai YTJ:n logoa tai ulkoasua.
 - Paavo: `https://pxdata.stat.fi/PxWeb/api/v1/fi/Postinumeroalueittainen_avoin_tieto/uusin` (Tilastokeskus, CC BY 4.0). Taulukot haetaan otsikon perusteella, koska tunnukset vaihtuvat vuosittain.
 - Toimipaikat: `https://pxdata.stat.fi/PxWeb/api/v1/fi/StatFin/alyr/13ww.px` (Tilastokeskus, CC BY 4.0).
+- Hintaindeksit: `https://pxdata.stat.fi/PxWeb/api/v1/fi/StatFin/khi` (Tilastokeskus, CC BY 4.0): kuukausitaulukot 11xs (kuluttajahintaindeksi, kaikki perusvuodet) ja 11xl (elinkustannusindeksi 1951:10=100), vuosikeskiarvot 11xt ja 11xm, virallinen vuosimuutos 122p.
+- EKP:n ohjauskorot: `https://data-api.ecb.europa.eu/service/data/FM/B.U2.EUR.4F.KR.{MRR_FR,DFR,MLFR}.LEV` (muutospäivät). EKP:n tilastojen uudelleenkäyttö on maksutonta, kun lähde mainitaan ("Source: ECB statistics") eikä tietoja muuteta. Euribor ei ole mukana: EKP:n Euribor-sarjat ovat Refinitivin toimittamaa kolmannen osapuolen dataa, jonka uudelleenkäyttö vaatii tuottajan luvan.
+- Viitekorko lasketaan korkolain (633/1982) 12 §:n mukaan: EKP:n perusrahoitusoperaatioiden viimeisin korko ennen puolivuotiskauden ensimmäistä päivää pyöristettynä ylöspäin puoleen prosenttiyksikköön. Viivästyskorko on viitekorko + 7 (4 §) ja kaupallisissa sopimuksissa + 8 prosenttiyksikköä (4 a §). Laskenta alkaa vuodesta 2009, koska perusrahoitusoperaatiot olivat 2000–2008 vaihtuvakorkoisia. Suomen Pankki julkaisee virallisen viitekoron; laskettu arvo tarkistettiin sen tiedotteesta kaudelle 1.7.–31.12.2026 (2,5 %).
 - Toimialaluokitus TOL 2025: `src/tol2025.js`, generoitu Tilastokeskuksen luokituspalvelusta.
 - Välimuisti: YTJ 12 h, Paavon metatiedot 1 vrk, tilastokyselyt 7 vrk (Cloudflaren Cache API).
 
@@ -52,4 +58,4 @@ npm run dev       # paikallinen Worker osoitteessa http://localhost:8787/mcp
 
 ## Lisenssi
 
-Koodi: MIT, ks. [LICENSE](LICENSE). Data: PRH (YTJ avoin data), Tilastokeskus (CC BY 4.0) ja THL Sotkanet.fi (THL:n ja Tilastokeskuksen indikaattorit, CC BY 4.0). Tämä ei ole PRH:n, Tilastokeskuksen eikä THL:n palvelu.
+Koodi: MIT, ks. [LICENSE](LICENSE). Data: PRH (YTJ avoin data), Tilastokeskus (CC BY 4.0), THL Sotkanet.fi (THL:n ja Tilastokeskuksen indikaattorit, CC BY 4.0) ja EKP:n tilastot. Tämä ei ole PRH:n, Tilastokeskuksen, THL:n eikä EKP:n palvelu.
