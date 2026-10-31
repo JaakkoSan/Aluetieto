@@ -6,7 +6,7 @@
 // indikaattorin, ja dataa haetaan uudelleen vain, jos THL on päivittänyt sitä.
 
 const API = "https://sotkanet.fi/rest/1.1";
-const USER_AGENT = "aluetieto-mcp/1.1 (Claude-liitin; weekly batch)";
+const USER_AGENT = "aluetieto-mcp/1.1 (Claude-liitin; viikoittainen paivitys)";
 const RECHECK_DAYS = 7;
 const YEARS_BACK = 6;
 const REGION_CATEGORIES = ["KUNTA", "HYVINVOINTIALUE", "MAAKUNTA", "SEUTUKUNTA", "MAA"];
