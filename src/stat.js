@@ -9,10 +9,28 @@ const TOIMIPAIKAT = `${PX}/StatFin/alyr/13ww.px`;
 
 const DAY = 86400;
 
+// Käsitelty metatieto (taulukkoluettelo, postinumerot, toimialaluettelo) pidetään
+// isolaatin muistissa vuorokauden. Sama metatieto luetaan yhdessä kutsussa useaan
+// kertaan, ja sen läpikäynti (esim. noin 3 000 postinumeroa) on Workersin
+// ilmaistason CPU-rajaan (10 ms) nähden kallista. Virheitä eikä keep-ehdon
+// hylkäämiä (esim. puuttuvia) tuloksia tallenneta.
+const memo = new Map();
+async function memoized(key, build, keep = () => true) {
+  const hit = memo.get(key);
+  if (hit && hit.exp > Date.now()) return hit.value;
+  const value = await build();
+  if (keep(value)) memo.set(key, { value, exp: Date.now() + DAY * 1000 });
+  return value;
+}
+
 // ---------- Paavo ----------
 
 /** Etsii Paavon taulukot otsikon alun perusteella (tunnukset vaihtuvat vuosittain). */
 async function paavoTables(budget) {
+  return memoized("paavo:tables", () => buildPaavoTables(budget), (t) => t.asukasrakenne && t.tulot);
+}
+
+async function buildPaavoTables(budget) {
   const list = await fetchJson(PAAVO, { ttl: DAY, budget });
   const find = (prefix) => (list ?? []).find((t) => String(t.text).includes(prefix))?.id ?? null;
   return {
@@ -22,24 +40,35 @@ async function paavoTables(budget) {
 }
 
 async function tableMeta(id, budget) {
+  return memoized(`paavo:${id}`, () => buildTableMeta(id, budget));
+}
+
+async function buildTableMeta(id, budget) {
   const meta = await fetchJson(`${PAAVO}/${id}`, { ttl: DAY, budget });
   if (!meta) throw new Error(`Paavon taulukkoa ${id} ei löytynyt.`);
   const pVar = meta.variables.find((v) => /postinumero/i.test(v.text));
   const yVar = meta.variables.find((v) => v.code === "timeperiod_y" || /vuosi/i.test(v.text));
   const cVar = meta.variables.find((v) => v.code === "contentscode");
-  const areas = new Map();
-  pVar.values.forEach((code, i) => {
-    const text = pVar.valueTexts[i];
-    const m = text.match(/^\S+\s+(.*?)\s*\(([^)]+)\)\s*$/);
-    areas.set(code, { code, name: m ? m[1].trim() : text, kunta: m ? m[2].trim() : null });
-  });
-  return {
+  let areas = null;
+  const value = {
     postVar: pVar.code,
     yearVar: yVar.code,
     years: yVar.values,
     contents: Object.fromEntries(cVar.values.map((c, i) => [c, cVar.valueTexts[i]])),
-    areas,
+    // Postinumeroalueet puretaan vasta tarvittaessa (tulotaulukolla niitä ei tarvita).
+    get areas() {
+      if (!areas) {
+        areas = new Map();
+        pVar.values.forEach((code, i) => {
+          const text = pVar.valueTexts[i];
+          const m = text.match(/^\S+\s+(.*?)\s*\(([^)]+)\)\s*$/);
+          areas.set(code, { code, name: m ? m[1].trim() : text, kunta: m ? m[2].trim() : null });
+        });
+      }
+      return areas;
+    },
   };
+  return value;
 }
 
 /** Postinumeroalueet (koodi, nimi, kunta). */
@@ -156,6 +185,10 @@ export async function population(codes, { year, budget } = {}) {
 // ---------- Toimipaikat maakunnittain (kaikki yritykset, myös toiminimet) ----------
 
 async function toimipaikatMeta(budget) {
+  return memoized("toimipaikat", () => buildToimipaikatMeta(budget));
+}
+
+async function buildToimipaikatMeta(budget) {
   const meta = await fetchJson(TOIMIPAIKAT, { ttl: DAY, budget });
   if (!meta) throw new Error("Toimipaikkataulukkoa ei löytynyt.");
   const v = (pred) => meta.variables.find(pred);

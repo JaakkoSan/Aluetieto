@@ -419,7 +419,9 @@ async function aluetarkistus(args) {
 
   if (args.nayta_yritykset !== false && byId.size) {
     lines.push("", "Yritykset:");
-    for (const c of [...byId.values()].sort((a, b) => (address(a)?.postCode ?? "").localeCompare(address(b)?.postCode ?? ""))) {
+    // Postinumerot ovat numeromerkkijonoja: tavallinen vertailu (ei ICU-lajittelua).
+    const pcOf = (c) => address(c)?.postCode ?? "";
+    for (const c of [...byId.values()].sort((a, b) => (pcOf(a) < pcOf(b) ? -1 : pcOf(a) > pcOf(b) ? 1 : 0))) {
       lines.push(companyLine(c));
     }
   }
