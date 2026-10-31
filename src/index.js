@@ -3,7 +3,7 @@
 import { TOOLS, callTool } from "./tools.js";
 import { refreshStep } from "./sotkanet.js";
 
-const SERVER_INFO = { name: "aluetieto", version: "1.1.0" };
+const SERVER_INFO = { name: "aluetieto", version: "1.1.1" };
 const SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS = `Tämä liitin hakee suomalaisia yritys- ja väestötietoja avoimista lähteistä: PRH:n YTJ (yritykset) ja Tilastokeskuksen Paavo (väestö postinumeroalueittain) sekä toimipaikkatilasto.

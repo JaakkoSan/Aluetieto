@@ -31,7 +31,7 @@ YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, 
 
 THL:n ohjeen mukaan Sotkanetin REST-rajapinta on tarkoitettu tietojen noutamiseen erissä, ei suoraan online-käyttöön. Siksi:
 
-- Ajastettu tehtävä (cron 15 min välein) tekee yhden askeleen: päivittää alueluettelon viikoittain tai tarkistaa yhden indikaattorin. Data haetaan uudelleen vain, jos THL on päivittänyt sitä (`data-updated`).
+- Ajastettu tehtävä (cron 15 min välein) tekee yhden askeleen: päivittää alueluettelon viikoittain, tarkistaa yhden indikaattorin metatiedot tai hakee yhden vuoden dataa. Yksi vuosi kerrallaan pitää ajon Workersin ilmaistason CPU-rajan (10 ms) alla. Data haetaan uudelleen vain, jos THL on päivittänyt sitä (`data-updated`); kesken olevat vuodet ovat jonossa sarakkeessa `pending_years`.
 - Tiedot tallennetaan D1-kantaan `aluetieto-sotkanet` (EU-lainkäyttöalue). Työkalut lukevat vain kantaa.
 - Ladattavat indikaattorit ovat listassa `src/sotkanet.js` (`INDICATORS`). Lisää tunnus listaan, niin seuraava ajo hakee sen. Mukana vain THL:n ja Tilastokeskuksen tuottamia indikaattoreita (CC BY 4.0); muiden tuottajien (esim. Kela, Valtiokonttori) käyttöehdot pitää tarkistaa erikseen.
 - Tallennetaan kuusi viimeisintä vuotta, alueina kunnat, hyvinvointialueet, maakunnat, seutukunnat ja koko maa.

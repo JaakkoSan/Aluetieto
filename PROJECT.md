@@ -31,3 +31,4 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 
 - 31.10.2026 v1.0: ensimmäinen versio.
 - 31.10.2026 v1.1: Sotkanet-indikaattorit (sote_indikaattorit, sote_tilasto), eräpäivitys D1:een.
+- 31.10.2026 v1.1.1: Sotkanet-lataus yksi vuosi per ajo (ilmaistason 10 ms CPU-raja).

@@ -2,8 +2,8 @@
 //
 // THL:n ohjeen mukaan Sotkanetin REST-rajapinta on tarkoitettu tietojen noutamiseen
 // erissä, ei suoraan online-käyttöön. Siksi tiedot haetaan ajastetusti (cron) D1-kantaan,
-// ja Clauden työkalut lukevat vain D1:stä. Yksi ajo käsittelee enintään yhden
-// indikaattorin, ja dataa haetaan uudelleen vain, jos THL on päivittänyt sitä.
+// ja Clauden työkalut lukevat vain D1:stä. Yksi ajo hakee joko yhden indikaattorin
+// metatiedot tai yhden vuoden dataa, ja dataa haetaan uudelleen vain, jos THL on päivittänyt sitä.
 
 const API = "https://sotkanet.fi/rest/1.1";
 const USER_AGENT = "aluetieto-mcp/1.1 (Claude-liitin; viikoittainen paivitys)";
@@ -40,7 +40,7 @@ export const INDICATORS = [
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS regions (id INTEGER PRIMARY KEY, category TEXT NOT NULL, code TEXT, title TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS regions_title ON regions (title COLLATE NOCASE)",
-  "CREATE TABLE IF NOT EXISTS indicators (id INTEGER PRIMARY KEY, title TEXT, organization TEXT, unit TEXT, decimals INTEGER, range_start INTEGER, range_end INTEGER, data_updated TEXT, description TEXT, limits TEXT, last_checked TEXT, last_loaded TEXT, row_count INTEGER)",
+  "CREATE TABLE IF NOT EXISTS indicators (id INTEGER PRIMARY KEY, title TEXT, organization TEXT, unit TEXT, decimals INTEGER, range_start INTEGER, range_end INTEGER, data_updated TEXT, description TEXT, limits TEXT, last_checked TEXT, last_loaded TEXT, row_count INTEGER, pending_years TEXT, pending_updated TEXT)",
   "CREATE TABLE IF NOT EXISTS data (indicator INTEGER NOT NULL, region INTEGER NOT NULL, year INTEGER NOT NULL, gender TEXT NOT NULL, value REAL, abs_value REAL, PRIMARY KEY (indicator, region, year, gender))",
   "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)",
 ];
@@ -57,9 +57,41 @@ const stripHtml = (s) => String(s ?? "").replace(/<br\s*\/?>/gi, " ").replace(/<
 
 // ---------- Eräpäivitys (cron) ----------
 
+// Ilmaistason CPU-raja on 10 ms / ajo, joten yksi ajo hakee enintään yhden vuoden
+// yhdestä indikaattorista. Ladattavat vuodet ovat jonossa (indicators.pending_years).
+
+const SCHEMA_VERSION = "2";
+const MIGRATIONS = [
+  "ALTER TABLE indicators ADD COLUMN pending_years TEXT",
+  "ALTER TABLE indicators ADD COLUMN pending_updated TEXT",
+];
+
+async function ensureSchema(db) {
+  await db.batch(SCHEMA.map((s) => db.prepare(s)));
+  const v = await db.prepare("SELECT value FROM meta WHERE key = 'schema'").first("value");
+  if (v === SCHEMA_VERSION) return;
+  for (const m of MIGRATIONS) {
+    try {
+      await db.prepare(m).run();
+    } catch {
+      // Sarake on jo olemassa.
+    }
+  }
+  await db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)").bind(SCHEMA_VERSION).run();
+}
+
+const parseYears = (s) => {
+  try {
+    const a = JSON.parse(s ?? "[]");
+    return Array.isArray(a) ? a.filter(Number.isInteger) : [];
+  } catch {
+    return [];
+  }
+};
+
 /** Yksi päivitysaskel. Palauttaa kuvauksen tehdystä työstä lokia varten. */
 export async function refreshStep(db) {
-  await db.batch(SCHEMA.map((s) => db.prepare(s)));
+  await ensureSchema(db);
 
   // 1) Alueet viikoittain.
   const regionsAt = await db.prepare("SELECT value FROM meta WHERE key = 'regions_loaded'").first("value");
@@ -77,7 +109,13 @@ export async function refreshStep(db) {
     return `alueet päivitetty (${rows.length})`;
   }
 
-  // 2) Seuraava indikaattori, jota ei ole tarkistettu viikkoon.
+  // 2) Kesken oleva lataus: seuraava vuosi jonosta.
+  const pending = await db
+    .prepare("SELECT id, pending_years, pending_updated, range_start, range_end FROM indicators WHERE pending_years IS NOT NULL AND pending_years != '[]' ORDER BY id LIMIT 1")
+    .first();
+  if (pending) return loadYear(db, pending);
+
+  // 3) Seuraava indikaattori, jota ei ole tarkistettu viikkoon: vain metatiedot.
   const known = new Map(
     (await db.prepare("SELECT id, last_checked, data_updated, row_count FROM indicators").all()).results.map((r) => [r.id, r]),
   );
@@ -91,13 +129,21 @@ export async function refreshStep(db) {
   const updated = meta["data-updated"] ?? null;
   const rangeEnd = meta.range?.end ?? null;
   const rangeStart = meta.range?.start ?? null;
-  const metaStmt = db
+
+  let queue = null;
+  if (rangeEnd && !(row && row.data_updated === updated && row.row_count > 0)) {
+    queue = [];
+    for (let y = rangeEnd; y > rangeEnd - YEARS_BACK && y >= (rangeStart ?? 0); y--) queue.push(y);
+  }
+
+  await db
     .prepare(
-      `INSERT INTO indicators (id, title, organization, unit, decimals, range_start, range_end, data_updated, description, limits, last_checked)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO indicators (id, title, organization, unit, decimals, range_start, range_end, data_updated, description, limits, last_checked, pending_years, pending_updated)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET title=excluded.title, organization=excluded.organization, unit=excluded.unit,
          decimals=excluded.decimals, range_start=excluded.range_start, range_end=excluded.range_end,
-         description=excluded.description, limits=excluded.limits, last_checked=excluded.last_checked`,
+         description=excluded.description, limits=excluded.limits, last_checked=excluded.last_checked,
+         pending_years=excluded.pending_years, pending_updated=excluded.pending_updated`,
     )
     .bind(
       id,
@@ -111,47 +157,62 @@ export async function refreshStep(db) {
       stripHtml(meta.description?.fi).slice(0, 1500),
       stripHtml(meta.limits?.fi).slice(0, 800),
       nowIso(),
-    );
+      queue ? JSON.stringify(queue) : null,
+      queue ? updated : null,
+    )
+    .run();
 
-  if (row && row.data_updated === updated && row.row_count > 0) {
-    await metaStmt.run();
-    return `indikaattori ${id}: ei muutoksia`;
-  }
-  if (!rangeEnd) {
-    await metaStmt.run();
-    return `indikaattori ${id}: ei vuosia`;
-  }
+  if (!rangeEnd) return `indikaattori ${id}: ei vuosia`;
+  if (!queue) return `indikaattori ${id}: ei muutoksia`;
+  return `indikaattori ${id}: muuttunut, jonossa vuodet ${queue.join(", ")}`;
+}
 
-  const years = [];
-  for (let y = rangeEnd; y > rangeEnd - YEARS_BACK && y >= (rangeStart ?? 0); y--) years.push(y);
-  const url = `${API}/json?indicator=${id}&${years.map((y) => `years=${y}`).join("&")}&genders=total`;
-  const data = await getJson(url);
+async function loadYear(db, ind) {
+  const queue = parseYears(ind.pending_years);
+  const year = queue.shift();
+  const data = await getJson(`${API}/json?indicator=${ind.id}&years=${year}&genders=total`);
   const regionIds = new Set((await db.prepare("SELECT id FROM regions").all()).results.map((r) => r.id));
-  const rows = data.filter((d) => regionIds.has(d.region));
+  const rows = data.filter((d) => regionIds.has(d.region) && d.year === year);
 
-  const stmts = [metaStmt, db.prepare("DELETE FROM data WHERE indicator = ?").bind(id)];
+  const stmts = [db.prepare("DELETE FROM data WHERE indicator = ? AND year = ?").bind(ind.id, year)];
   // Monirivinen INSERT: 6 parametria/rivi, enintään 100 parametria/lause -> 16 riviä.
   for (let i = 0; i < rows.length; i += 16) {
     const chunk = rows.slice(i, i + 16);
     const sql = `INSERT OR REPLACE INTO data (indicator, region, year, gender, value, abs_value) VALUES ${chunk.map(() => "(?, ?, ?, ?, ?, ?)").join(", ")}`;
-    stmts.push(db.prepare(sql).bind(...chunk.flatMap((d) => [id, d.region, d.year, d.gender, d.value ?? null, d.absValue ?? null])));
+    stmts.push(db.prepare(sql).bind(...chunk.flatMap((d) => [ind.id, d.region, d.year, d.gender, d.value ?? null, d.absValue ?? null])));
   }
+
+  if (queue.length) {
+    stmts.push(db.prepare("UPDATE indicators SET pending_years = ? WHERE id = ?").bind(JSON.stringify(queue), ind.id));
+    await db.batch(stmts);
+    return `indikaattori ${ind.id}: vuosi ${year}, ${rows.length} riviä (jäljellä ${queue.length})`;
+  }
+
+  // Viimeinen vuosi: poistetaan ikkunan ulkopuoliset vuodet ja merkitään lataus valmiiksi.
+  const minYear = (ind.range_end ?? year) - YEARS_BACK + 1;
   stmts.push(
-    db.prepare("UPDATE indicators SET data_updated = ?, last_loaded = ?, row_count = ? WHERE id = ?").bind(updated, nowIso(), rows.length, id),
+    db.prepare("DELETE FROM data WHERE indicator = ? AND year < ?").bind(ind.id, minYear),
+    db
+      .prepare(
+        "UPDATE indicators SET data_updated = pending_updated, last_loaded = ?, row_count = (SELECT COUNT(*) FROM data WHERE indicator = ?), pending_years = NULL, pending_updated = NULL WHERE id = ?",
+      )
+      .bind(nowIso(), ind.id, ind.id),
   );
   await db.batch(stmts);
-  return `indikaattori ${id}: ladattu ${rows.length} riviä (${years[years.length - 1]}–${years[0]})`;
+  return `indikaattori ${ind.id}: vuosi ${year}, ${rows.length} riviä, lataus valmis`;
 }
 
 // ---------- Luku (työkalut) ----------
 
 export async function listIndicators(db) {
   try {
-    return (await db.prepare("SELECT id, title, organization, unit, range_start, range_end, data_updated, last_loaded, row_count FROM indicators ORDER BY id").all()).results;
+    return (await db.prepare("SELECT id, title, organization, unit, range_start, range_end, data_updated, last_loaded, row_count, pending_years FROM indicators ORDER BY id").all()).results;
   } catch {
     return [];
   }
 }
+
+export const pendingYears = (ind) => parseYears(ind?.pending_years);
 
 export async function findIndicator(db, q) {
   const s = String(q ?? "").trim();

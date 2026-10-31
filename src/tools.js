@@ -17,7 +17,7 @@ import {
 } from "./ytj.js";
 import { postAreas, areasOfMunicipality, population, establishments, establishmentsMeta } from "./stat.js";
 import { TOL2025 } from "./tol2025.js";
-import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel } from "./sotkanet.js";
+import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -488,14 +488,15 @@ function needDb(env) {
 async function soteIndikaattorit(args, env) {
   const db = needDb(env);
   let rows = await listIndicators(db);
-  if (!rows.length) return "Indikaattoreita ei ole vielä ladattu. Ajastettu päivitys hakee ne Sotkanetista vähitellen (yksi indikaattori kerrallaan).";
+  if (!rows.length) return "Indikaattoreita ei ole vielä ladattu. Ajastettu päivitys hakee ne Sotkanetista vähitellen (yksi vuosi kerrallaan 15 minuutin välein).";
   if (args.hakusana) {
     const q = String(args.hakusana).toLowerCase();
     rows = rows.filter((r) => String(r.title ?? "").toLowerCase().includes(q));
   }
   const lines = rows.map((r) => {
-    const loaded = r.row_count ? "" : " (ei vielä ladattu)";
-    return `${r.id} ${r.title ?? "?"} | ${r.organization ?? "?"} | ${r.unit ?? ""} | vuodet ${r.range_start ?? "?"}–${r.range_end ?? "?"} | päivitetty ${fmtDate(r.data_updated)}${loaded}`;
+    const left = pendingYears(r);
+    const loaded = left.length ? ` (lataus kesken, puuttuu vuodet ${[...left].sort().join(", ")})` : r.row_count ? "" : " (ei vielä ladattu)";
+    return `${r.id} ${r.title ?? "?"} | ${r.organization ?? "?"} | ${r.unit ?? ""} | vuodet ${r.range_start ?? "?"}–${r.range_end ?? "?"} | päivitetty ${fmtDate(r.data_updated) || "–"}${loaded}`;
   });
   return clip(
     `Sotkanet-indikaattorit (${rows.length}):\n` +
@@ -511,7 +512,8 @@ async function soteTilasto(args, env) {
   if (ind.ambiguous) {
     return "Useita osumia, tarkenna tunnuksella:\n" + ind.ambiguous.map((r) => `${r.id} ${r.title}`).join("\n");
   }
-  if (!ind.row_count) throw new UserError(`Indikaattoria ${ind.id} ei ole vielä ladattu. Ajastettu päivitys hakee sen pian.`);
+  const left = pendingYears(ind);
+  if (!ind.row_count && !left.length) throw new UserError(`Indikaattoria ${ind.id} ei ole vielä ladattu. Ajastettu päivitys hakee sen pian.`);
   const names = (args.alueet ?? []).map(String).filter(Boolean);
   if (!names.length) throw new UserError("Anna vähintään yksi alue.");
   if (names.length > 30) throw new UserError("Enintään 30 aluetta kerralla.");
@@ -521,6 +523,9 @@ async function soteTilasto(args, env) {
   if (country && !all.some((r) => r.id === country.id)) all.push(country);
   const years = Array.isArray(args.vuodet) && args.vuodet.length ? args.vuodet.map(Number).filter(Number.isInteger) : null;
   const rows = await soteValues(db, ind.id, all.map((r) => r.id), years);
+  if (!rows.length && left.length) {
+    throw new UserError(`Indikaattorin ${ind.id} lataus on kesken (puuttuu vuodet ${[...left].sort().join(", ")}). Ajastettu päivitys hakee yhden vuoden 15 minuutin välein.`);
+  }
   const yearList = [...new Set(rows.map((r) => r.year))].sort();
   const dec = Number.isInteger(ind.decimals) ? ind.decimals : 1;
   const nfDec = new Intl.NumberFormat("fi-FI", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -538,6 +543,9 @@ async function soteTilasto(args, env) {
   for (const r of all) {
     const byYear = new Map(rows.filter((x) => x.region === r.id).map((x) => [x.year, x]));
     lines.push(`${r.title} (${categoryLabel(r.category)}) | ${yearList.map((y) => cell(byYear.get(y))).join(" | ")}`);
+  }
+  if (left.length) {
+    lines.push("", `HUOM: lataus on kesken, vuodet ${[...left].sort().join(", ")} puuttuvat vielä.${ind.row_count ? " Taulukossa voi olla sekaisin uutta ja edellistä päivitystä." : ""}`);
   }
   if (missing.length) lines.push("", `Alueita ei löytynyt: ${missing.join(", ")}. Käytä virallista nimeä, esim. "Kymenlaakson hyvinvointialue".`);
   if (ind.description) lines.push("", `Kuvaus: ${ind.description.slice(0, 600)}${ind.description.length > 600 ? "…" : ""}`);
