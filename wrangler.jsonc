@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aluetieto-mcp",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  // Pyyntöjen sisältöä ei tallenneta. Välimuisti: Cloudflaren Cache API.
+  "workers_dev": true,
+  // Käyttörajoitus työkalukutsuille (ks. src/index.js). period: 10 tai 60 sekuntia.
+  "ratelimits": [
+    { "name": "SESSION_LIMITER", "namespace_id": "1201", "simple": { "limit": 30, "period": 60 } },
+    { "name": "IP_LIMITER", "namespace_id": "1202", "simple": { "limit": 300, "period": 60 } }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "aluetieto-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Aluetieto MCP -palvelin Cloudflare Workersissa: YTJ-yritystiedot ja Tilastokeskuksen Paavo-väestötiedot aluetarkistukseen.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
