@@ -12,6 +12,9 @@
   ],
   // Yksi päivitysaskel 15 minuutin välein; tekee THL:lle hakuja vain, kun jokin on vanhentunut (7 vrk).
   "triggers": { "crons": ["*/15 * * * *"] },
+  // Verohallinnon CSV:n lataus (n. 27 Mt, 380 000 riviä) jäsentää koko tiedoston yhdessä ajossa,
+  // joten CPU-raja nostetaan oletuksesta (30 s). Laskutus perustuu käytettyyn aikaan, ei rajaan.
+  "limits": { "cpu_ms": 120000 },
   // Käyttörajoitus työkalukutsuille (ks. src/index.js). period: 10 tai 60 sekuntia.
   "ratelimits": [
     { "name": "SESSION_LIMITER", "namespace_id": "1201", "simple": { "limit": 30, "period": 60 } },

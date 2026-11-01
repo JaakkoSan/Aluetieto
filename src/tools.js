@@ -18,6 +18,7 @@ import {
 import { postAreas, areasOfMunicipality, population, establishments, establishmentsMeta } from "./stat.js";
 import { TOL2025 } from "./tol2025.js";
 import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yearBefore, ecbRates, rateOn, referenceRate, periodStart, periodEnd, FIRST_REFERENCE_PERIOD } from "./talous.js";
+import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
@@ -153,6 +154,35 @@ export const TOOLS = [
     },
   },
   {
+    name: "yrityksen_talous",
+    description:
+      "Yrityksen taloustiedot kahdesta avoimesta lähteestä: (1) PRH:n digitaalinen tilinpäätös (tuloslaskelma ja tase, edellinen tilikausi vertailuna) niiltä yrityksiltä, jotka ovat ilmoittaneet tilinpäätöksen iXBRL-muodossa, ja (2) Verohallinnon yhteisöjen tuloverotuksen julkiset tiedot vuosittain (verotettava tulo, maksuunpannut verot, veronpalautus, jäännösvero, muutosverotus). Anna Y-tunnus tai nimi.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        y_tunnus: { type: "string", description: "Y-tunnus, esim. 2474190-3." },
+        nimi: { type: "string", description: "Yrityksen nimi, jos Y-tunnus ei ole tiedossa (haku YTJ:stä)." },
+        tilikausi: { type: "string", description: "Tilikauden päättymispäivä (vvvv-kk-pp). Oletus: uusin digitaalinen tilinpäätös." },
+        kaikki_erat: { type: "boolean", description: "true = kaikki tilinpäätöksen erät, ei vain keskeisiä." },
+      },
+    },
+  },
+  {
+    name: "yhteisoverot",
+    description:
+      "Verohallinnon yhteisöjen tuloverotuksen julkiset tiedot listana: kunnan tai koko maan suurimmat yhteisöveron maksajat tai verotettavan tulon mukaan, valinnaisesti nimen osalla rajattuna, sekä yhteissummat. Kunta on yhteisön kotikunta kaupparekisterissä.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kunta: { type: "string", description: "Kunnan nimi tai numero (esim. \"Kotka\" tai \"285\"). Valinnainen; ilman kuntaa koko maa." },
+        vuosi: { type: "integer", description: "Verovuosi. Oletus: uusin ladattu." },
+        jarjestys: { type: "string", enum: ["verot", "tulo"], description: "verot (oletus) = maksuunpannut verot, tulo = verotettava tulo." },
+        hakusana: { type: "string", description: "Nimen osa, esim. \"hoiva\" tai \"kotihoito\". Valinnainen." },
+        sivu: { type: "integer", description: "Tulossivu, 1 = ensimmäinen (25 riviä sivulla)." },
+      },
+    },
+  },
+  {
     name: "hintaindeksi",
     description:
       "Kuluttajahintaindeksin tai elinkustannusindeksin pisteluvut ja vuosimuutos kuukausittain (Tilastokeskus). Oletuksena viimeiset 13 kuukautta. Inflaatio, hintojen nousu, indeksisidonnaiset sopimukset.",
@@ -208,6 +238,8 @@ const TITLES = {
   hintaindeksi: "Kuluttajahinta- ja elinkustannusindeksi",
   indeksitarkistus: "Indeksitarkistus",
   korot: "Viitekorko, viivästyskorko ja EKP:n korot",
+  yrityksen_talous: "Yrityksen talous (tilinpäätös ja verotiedot)",
+  yhteisoverot: "Yhteisöjen verotiedot",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -739,6 +771,171 @@ async function korot(args) {
   return clip(out.join("\n"));
 }
 
+// ---------- Yritysten talous: PRH:n digitaaliset tilinpäätökset ja Verohallinnon yhteisöverotiedot ----------
+
+const PRH_FIN_SOURCE = "Lähde: Patentti- ja rekisterihallitus, digitaaliset tilinpäätöstiedot (avoin data, CC BY 4.0); nimikkeet SBR-taksonomiasta (Valtiokonttori).";
+const VERO_SOURCE = "Lähde: Verohallinto, yhteisöjen tuloverotuksen julkiset tiedot (avoin data, CC BY 4.0), https://www.vero.fi/avoindata";
+const eur = (n) => (n === null || n === undefined ? "–" : `${nf.format(Math.round(n))} €`);
+const pct = (a, b) => (a !== undefined && b ? `${fmtDec((a / b) * 100, 1)} %` : null);
+
+async function resolveCompany(args, budget) {
+  const id = String(args.y_tunnus ?? "").trim();
+  if (id) {
+    if (!/^\d{7}-\d$/.test(id)) throw new UserError("Anna y-tunnus muodossa 1234567-8.");
+    return { id, name: null };
+  }
+  const q = String(args.nimi ?? "").trim();
+  if (!q) throw new UserError("Anna Y-tunnus tai nimi.");
+  const { companies } = await searchCompanies({ name: q }, { budget });
+  const list = companies.filter(isActive);
+  const exact = list.filter((c) => currentName(c).toLowerCase() === q.toLowerCase());
+  const pick = exact.length === 1 ? exact : list;
+  if (pick.length === 1) return { id: pick[0].businessId?.value, name: currentName(pick[0]) };
+  if (!pick.length) throw new UserError(`Nimellä "${q}" ei löytynyt toimivaa yritystä YTJ:stä. Anna Y-tunnus.`);
+  throw new UserError(`Nimellä "${q}" löytyi useita yrityksiä. Anna Y-tunnus:\n${pick.slice(0, 15).map((c) => `- ${c.businessId?.value} ${currentName(c)}`).join("\n")}`);
+}
+
+// Etumerkit vaihtelevat ilmoittajittain ja jopa saman yhtiön vuosien välillä (havaittu otoksesta),
+// joten käytäntö päätellään tilinpäätöskohtaisesti: kulut näytetään positiivisina ja
+// rahoituserien netto käännetään, jos liikevoitto − rahoituserät = voitto ennen tilinpäätössiirtoja.
+const COST_CODES = ["x758", "x5", "x6", "x448", "x1869", "x541"];
+function signConvention(pl) {
+  const costSum = COST_CODES.reduce((a, c) => a + (pl[c] ?? 0), 0);
+  const cost = costSum < 0 ? -1 : 1;
+  let fin = 1;
+  let finKnown = false;
+  if (pl.x689 !== undefined && pl.x12 !== undefined && pl.x738 !== undefined) {
+    if (Math.abs(pl.x689 + pl.x12 - pl.x738) < 1) finKnown = true;
+    else if (Math.abs(pl.x689 - pl.x12 - pl.x738) < 1) {
+      fin = -1;
+      finKnown = true;
+    }
+  }
+  return { cost, fin, finKnown };
+}
+
+function finLine(code, cur, prev, sc = null, scPrev = null) {
+  const factor = (conv) => (!conv ? 1 : COST_CODES.includes(code) ? conv.cost : code === "x12" ? conv.fin : 1);
+  const a = cur[code];
+  const b = prev[code];
+  if (a === undefined && b === undefined) return null;
+  const base = mcLabel(code).replace(/\s*\+ \(-\)$/, "");
+  const label = code === "x12" && sc ? `${base} (netto, + = tuotto${sc.finKnown ? "" : "; etumerkki ilmoitetussa muodossa"})` : base;
+  return `- ${label}: ${a === undefined ? "–" : eur(a * factor(sc))}${b === undefined ? "" : ` (ed. ${eur(b * factor(scPrev ?? sc))})`}`;
+}
+
+async function yrityksenTalous(args, env) {
+  const budget = newBudget(10);
+  const { id, name } = await resolveCompany(args, budget);
+  const out = [];
+  const periods = await financialPeriods(id, budget).catch(() => null);
+  let st = null;
+  let date = null;
+  if (periods?.length) {
+    date = args.tilikausi ? String(args.tilikausi).trim() : periods[0].date;
+    if (!periods.some((p) => p.date === date)) throw new UserError(`Tilikaudelta ${date} ei ole digitaalista tilinpäätöstä. Saatavilla: ${periods.map((p) => p.date).join(", ")}.`);
+    st = await financialStatement(id, date);
+  }
+  const vero = env?.DB ? await veroForCompany(env.DB, id).catch(() => null) : null;
+  const veroName = vero?.rows?.length ? vero.rows[vero.rows.length - 1].nimi : null;
+  out.push(`${st?.name ?? name ?? veroName ?? "Yritys"} (${id})`);
+  out.push("", "TILINPÄÄTÖS (PRH, digitaalinen tilinpäätös)");
+  if (!st) {
+    out.push(
+      periods === null
+        ? "PRH:n tilinpäätösrajapinta ei vastannut."
+        : "Yritykseltä ei ole digitaalista tilinpäätöstä PRH:n avoimessa datassa. Avoimessa datassa ovat vain iXBRL-muodossa ilmoitetut tilinpäätökset (tilikaudelta 2025 n. 12 000 yritystä); muut tilinpäätökset saa PRH:n Virre-palvelusta.",
+    );
+  } else {
+    out.push(`Tilikausi ${fmtDate(st.start)}–${fmtDate(st.end)}${periods.length > 1 ? `; muut tilikaudet: ${periods.filter((p) => p.date !== date).map((p) => fmtDate(p.date)).join(", ")}` : ""}.`);
+    const { pl, bs } = st.cur;
+    const ppl = st.prev.pl;
+    const pbs = st.prev.bs;
+    const sc = signConvention(pl);
+    const scPrev = Object.keys(ppl).length ? signConvention(ppl) : sc;
+    const plLines = PL_MAIN.map((c) => finLine(c, pl, ppl, sc, scPrev)).filter(Boolean);
+    const bsLines = BS_MAIN.map((c) => finLine(c, bs, pbs)).filter(Boolean);
+    if (plLines.length) out.push("", "Tuloslaskelma (kulut positiivisina, suluissa edellinen tilikausi):", ...plLines);
+    if (bsLines.length) out.push("", "Tase:", ...bsLines);
+    const ratios = [];
+    const lvp = pct(pl.x689, pl.x673);
+    if (lvp) ratios.push(`liikevoitto-% ${lvp}`);
+    const oa = pct(bs.x376, bs.x481);
+    if (oa) ratios.push(`oman pääoman osuus vastattavista ${oa}`);
+    if (ratios.length) out.push("", `Laskettu: ${ratios.join(", ")} (yksinkertaistettu; virallisissa tunnusluvuissa oikaisut voivat muuttaa lukuja).`);
+    if (args.kaikki_erat) {
+      const main = new Set([...PL_MAIN, ...BS_MAIN]);
+      const rest = (cur, prev, title) => {
+        const codes = [...new Set([...Object.keys(cur), ...Object.keys(prev)])].filter((c) => !main.has(c));
+        if (!codes.length) return;
+        out.push("", title, ...codes.sort((a, b) => (mcLabel(a) < mcLabel(b) ? -1 : mcLabel(a) > mcLabel(b) ? 1 : 0)).map((c) => finLine(c, cur, prev)).filter(Boolean));
+      };
+      rest(pl, ppl, "Muut tuloslaskelman erät (etumerkit ilmoitetussa muodossa, ne vaihtelevat ilmoittajittain):");
+      rest(bs, pbs, "Muut taseen erät:");
+    } else {
+      out.push("Kaikki erät: kaikki_erat: true.");
+    }
+    out.push(PRH_FIN_SOURCE);
+  }
+
+  out.push("", "VEROTIEDOT (Verohallinto, yhteisöjen tuloverotuksen julkiset tiedot)");
+  if (!env?.DB) {
+    out.push("Verotietokantaa ei ole kytketty.");
+  } else {
+    const loaded = await veroLoaded(env.DB);
+    if (!loaded.length) {
+      out.push("Verotietoja ei ole vielä ladattu (ajastettu lataus hakee vuodet vähitellen).");
+    } else {
+      const { rows, changes } = vero ?? (await veroForCompany(env.DB, id));
+      if (!rows.length) {
+        out.push(`Yhteisöä ei ole ladatuissa verotiedoissa (vuodet ${loaded.map((l) => l.vuosi).join(", ")}).`);
+      } else {
+        for (const r of rows) {
+          out.push(`- ${r.vuosi}: verotettava tulo ${eur(r.tulo)}, maksuunpannut verot ${eur(r.verot)}, veronpalautus ${eur(r.palautus)}, jäännösvero ${eur(r.jaannos)} (kotikunta ${r.kunta ?? "?"})`);
+        }
+        if (changes.length) {
+          out.push("Muutosverotus (verotukseen tehdyt muutokset; tiedot julkisia verovuodesta 2022):");
+          for (const c of changes) out.push(`- ${c.vuosi} muutos ${c.muutos}: verotettava tulo ${eur(c.tulo)}, maksuunpannut verot ${eur(c.verot)}, veronpalautus ${eur(c.palautus)}, jäännösvero ${eur(c.jaannos)}`);
+        }
+      }
+      out.push(VERO_SOURCE);
+    }
+  }
+  return clip(out.join("\n"));
+}
+
+async function yhteisoverot(args, env) {
+  if (!env?.DB) throw new UserError("Verotietokantaa ei ole kytketty tähän palvelimeen.");
+  const db = env.DB;
+  const loaded = await veroLoaded(db);
+  if (!loaded.length) return "Verotietoja ei ole vielä ladattu. Ajastettu lataus hakee vuodet Verohallinnon avoimesta datasta vähitellen.";
+  const years = loaded.map((l) => l.vuosi).filter(Boolean);
+  const vuosi = args.vuosi ? Number(args.vuosi) : Math.max(...years);
+  if (!years.includes(vuosi)) throw new UserError(`Verovuotta ${vuosi} ei ole ladattu. Saatavilla: ${years.join(", ")}.`);
+  let kunta = null;
+  if (args.kunta) {
+    kunta = await veroKunta(db, args.kunta);
+    if (!kunta) throw new UserError(`Kuntaa "${args.kunta}" ei löytynyt verotiedoista.`);
+  }
+  const page = Math.max(1, Number(args.sivu) || 1);
+  const order = args.jarjestys === "tulo" ? "tulo" : "verot";
+  const { rows, sum } = await veroTop(db, { kunta_nro: kunta?.nro, vuosi, order, hakusana: args.hakusana ? String(args.hakusana).trim() : null, limit: 25, offset: (page - 1) * 25 });
+  const where = kunta ? `${kunta.nimi ?? kunta.nro}` : "koko maa";
+  const out = [
+    `Yhteisöjen tuloverotus ${vuosi}, ${where}${args.hakusana ? `, nimessä "${args.hakusana}"` : ""}: ${fmt(sum?.n)} yhteisöä, joista veroa maksaneita ${fmt(sum?.maksajia)}; maksuunpannut verot yhteensä ${eur(sum?.verot)}, verotettava tulo yhteensä ${eur(sum?.tulo)}.`,
+    `Järjestys: ${order === "tulo" ? "verotettava tulo" : "maksuunpannut verot"}, sivu ${page}.`,
+    "",
+  ];
+  rows.forEach((r, i) => out.push(`${(page - 1) * 25 + i + 1}. ${r.nimi} (${r.ytunnus}${kunta ? "" : `, ${r.kunta}`}): verot ${eur(r.verot)}, verotettava tulo ${eur(r.tulo)}${r.palautus ? `, palautus ${eur(r.palautus)}` : ""}${r.jaannos ? `, jäännösvero ${eur(r.jaannos)}` : ""}`));
+  if ((sum?.n ?? 0) > page * 25) out.push("", `Lisää: sivu ${page + 1}.`);
+  out.push(
+    "",
+    "Kunta on yhteisön kotikunta kaupparekisterissä. Yhteisöveron kuntaosuus jaetaan toimipaikkojen ja henkilöstön sijainnin mukaan, joten kunnan yhteisöverotulo ei ole sama kuin tämä summa.",
+    VERO_SOURCE,
+  );
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -751,6 +948,8 @@ const HANDLERS = {
   hintaindeksi,
   indeksitarkistus,
   korot,
+  yrityksen_talous: yrityksenTalous,
+  yhteisoverot,
 };
 
 export async function callTool(name, args = {}, env = {}) {

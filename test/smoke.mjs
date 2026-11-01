@@ -22,7 +22,7 @@ function check(cond, label) {
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
 check(init.result?.serverInfo?.name === "aluetieto", "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 11 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (11, readOnlyHint)");
+check(list.result?.tools?.length === 13 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (13, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -42,6 +42,10 @@ const cases = [
   ["indeksitarkistus", { lahtokohta: "2024-03", tarkistus: "2025-03", summa: 850 }, (t) => t.includes("Muutos") && t.includes("850,00")],
   ["indeksitarkistus", { indeksi: "elinkustannus", lahtokohta: "2023", tarkistus: "2025" }, (t) => t.includes("vuosikeskiarvot")],
   ["korot", { paiva: "2026-10-31" }, (t) => t.includes("viitekorko 1.7.2026–31.12.2026: 2,5 %") && t.includes("9,5 %") && t.includes("10,5 %")],
+  // Verotiedot luetaan D1:stä; Node-testissä kantaa ei ole. Tilinpäätös haetaan PRH:lta.
+  ["yrityksen_talous", { y_tunnus: "0100379-9", tilikausi: "2024-12-31" }, (t) => t.includes("Asuntotekniikka Oy") && /Rahoitustuotot ja -kulut \(netto, \+ = tuotto\): 13.493/.test(t) && t.includes("ei ole kytketty")],
+  ["yrityksen_talous", { y_tunnus: "2474190-3" }, (t) => t.includes("ei ole digitaalista tilinpäätöstä")],
+  ["yhteisoverot", { kunta: "Kotka" }, (t) => t.includes("ei ole kytketty")],
   ["korot", { paiva: "2024-03-15" }, (t) => t.includes("4,5 %") && t.includes("11,5 %")],
 ];
 for (const [name, args, pred] of cases) {

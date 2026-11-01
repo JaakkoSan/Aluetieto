@@ -21,6 +21,8 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/index.js`: MCP-protokolla ja käyttörajoitus
 - `src/tools.js`: työkalut
 - `src/ytj.js`: YTJ-haku ja tulkinta
+- `src/yritystalous.js`: PRH:n digitaaliset tilinpäätökset (XBRL) ja Verohallinnon yhteisöverotiedot (D1-lataus ja kyselyt)
+- `src/sbrLabels.js`: SBR-taksonomian erien suomenkieliset nimet (generoitu)
 - `src/talous.js`: hintaindeksit (Tilastokeskus, StatFin/khi) ja korot (EKP:n rajapinta, korkolain viitekorko)
 - `src/stat.js`: Paavo ja toimipaikkatilasto (PxWeb)
 - `src/http.js`: HTTP, välimuisti, alipyyntöbudjetti
@@ -35,3 +37,4 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - 31.10.2026 v1.1.1: Sotkanet-lataus yksi vuosi per ajo (ilmaistason 10 ms CPU-raja).
 - 31.10.2026 v1.1.2: Tilastokeskuksen metatiedot (Paavo, toimipaikat) käsitellään kerran isolaattia kohden; postinumerot puretaan vasta tarvittaessa (CPU-aika aluetarkistuksessa noin kolmannes aiemmasta).
 - 31.10.2026 v1.2: hintaindeksi, indeksitarkistus (Tilastokeskus, kuluttajahinta- ja elinkustannusindeksi) ja korot (korkolain viitekorko ja viivästyskorot EKP:n perusrahoitusoperaatioiden korosta, EKP:n ohjauskorot). Euribor jätetty pois lisenssin vuoksi (Refinitivin data EKP:n rajapinnassa).
+- 1.11.2026 v1.3: yrityksen_talous (PRH:n digitaalinen tilinpäätös ja Verohallinnon julkiset verotiedot) ja yhteisoverot. Verotiedot ladataan ajastetusti D1:een (tiedosto virtana, kymmenen lauseen erät, vuoden vanhat rivit korvataan). Tilinpäätösten etumerkit vaihtelevat ilmoittajittain (havaittu otoksesta 40 yritystä), joten käytäntö päätellään tilinpäätöskohtaisesti. Kelan etuustilastot (kohta 3) jätettiin pois, koska avoindata.fi:n rajapinta palautti 403 liittimen omalla User-Agentilla; tunnistetta ei vaihdettu eston kiertämiseksi.
