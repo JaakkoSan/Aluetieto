@@ -21,6 +21,7 @@ import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yea
 import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
 import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
 import { resolvePtvArea, servicesInArea, service, channels, channelText, serviceSummary, PTV_SOURCE } from "./ptv.js";
+import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryText, ytjWebUrl, NOTICE_TYPES, PAGE_SIZE, KREK_SOURCE } from "./krek.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
@@ -292,6 +293,26 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: "kaupparekisteri_ilmoitukset",
+    description:
+      "PRH:n kaupparekisteriin rekisteröidyt ilmoitukset: uudet yritykset, konkurssit, selvitystilat, saneeraukset, purkautumiset, poistouhat sekä muutokset (hallitus, toimitusjohtaja, toiminimi, kotipaikka, yhtiöjärjestys, tilinpäätökset). Yhden yrityksen ilmoitukset Y-tunnuksella, tai haku asian, postitoimipaikan, nimen, yritysmuodon ja aikavälin mukaan. Tuloksena ilmoituksen päivä, tyyppi ja rekisteröidyt asiat, ei ilmoituksen tekstiä.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        y_tunnus: { type: "string", description: "Yhden yrityksen kaikki ilmoitukset, esim. 3578202-2." },
+        asia: { type: "string", description: "Rekisteröity asia: \"uudet yritykset\", \"konkurssi\", \"selvitystila\", \"saneeraus\", \"purkautuminen\", \"poistouhka\", \"rekisteristä poistaminen\", \"hallitus\", \"toimitusjohtaja\", \"toiminimi\", \"kotipaikka\", \"yhtiöjärjestys\", \"tilinpäätös\", \"sulautuminen\" tai rekisterimerkinnän koodi (esim. KONALK). Koko maan haku vaatii asian." },
+        paikkakunta: { type: "string", description: "Postitoimipaikka, esim. \"Kotka\". Kunnan osilla voi olla oma postitoimipaikka (esim. Karhula)." },
+        nimi: { type: "string", description: "Toiminimi tai sen osa." },
+        ilmoitustyyppi: { type: "string", description: "Perusilmoitus, muutosilmoitus, tilinpäätös, tiedonanto, julkinen haaste velkojille, hakemus, oikaisu, kuntamuutosilmoitus, valvonta-asia, fuusiohakemus tai diffuusiohakemus. Valinnainen." },
+        yritysmuoto: { type: "string", description: "Yritysmuodon lyhenne, esim. OY, KY, AY, OK, OYJ, AOY. Valinnainen." },
+        toimiala: { type: "string", description: "Rajaa tulokset päätoimialaan (TOL 2025 -koodi tai nimen osa). Suodatus tehdään enintään 500 ensimmäisestä yrityksestä. Valinnainen." },
+        alkaen: { type: "string", description: "Ilmoitukset alkaen (vvvv-kk-pp). Oletus haussa: 30 päivää sitten." },
+        asti: { type: "string", description: "Ilmoitukset asti (vvvv-kk-pp). Valinnainen." },
+        sivu: { type: "integer", description: "Tulossivu (50 yritystä sivulla)." },
+      },
+    },
+  },
 ];
 
 const TITLES = {
@@ -313,6 +334,7 @@ const TITLES = {
   tilasto: "Tilasto (StatFin)",
   hae_julkisia_palveluja: "Hae julkisia palveluja (Suomi.fi)",
   julkinen_palvelu: "Julkinen palvelu (Suomi.fi)",
+  kaupparekisteri_ilmoitukset: "Kaupparekisterin ilmoitukset (PRH)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -1169,6 +1191,170 @@ async function julkinenPalvelu(args) {
   return clip(out.join("\n"));
 }
 
+// ---------- Kaupparekisterin ilmoitukset ----------
+
+const KREK_FORMS = ["AOY", "ASH", "ASY", "AY", "AYH", "ETS", "ETY", "SCE", "SCP", "HY", "KOY", "KVJ", "KVY", "KY", "OK", "OP", "OY", "OYJ", "SE", "SL", "SP", "SÄÄ", "TYH", "VOJ", "VOY", "VY", "VALTLL"];
+const KREK_MAX_LIST = 40;
+const KREK_SCAN_PAGES = 10;
+
+function isoDate(v, label) {
+  if (v === undefined || v === null || v === "") return null;
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return s;
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  throw new UserError(`${label}: anna päivä muodossa vvvv-kk-pp tai pp.kk.vvvv.`);
+}
+
+/** Rajapinta toistaa saman ilmoituksen useana rivinä; yhdistetään diaarinumeron, tyypin ja päivän mukaan. */
+function uniqueNotices(c) {
+  const byRecord = new Map();
+  for (const n of c.publicNotices ?? []) {
+    const k = `${n.recordNumber}|${n.typeOfRegistration}|${n.registrationDate}`;
+    const prev = byRecord.get(k);
+    if (prev) prev.entryCodes = [...new Set([...prev.entryCodes, ...(n.entryCodes ?? [])])];
+    else byRecord.set(k, { ...n, entryCodes: [...(n.entryCodes ?? [])] });
+  }
+  return [...byRecord.values()];
+}
+
+function noticeLine(n, maxEntries = 6) {
+  const entries = (n.entryCodes ?? []).map(entryText);
+  const shown = entries.slice(0, maxEntries).join(", ") + (entries.length > maxEntries ? ` (+${entries.length - maxEntries} muuta)` : "");
+  return `${fmtDate(n.registrationDate)} ${NOTICE_TYPES[n.typeOfRegistration] ?? n.typeOfRegistration ?? "ilmoitus"} (dnro ${n.recordNumber})${shown ? `: ${shown}` : ""}`;
+}
+
+function companyHead(c) {
+  const id = c.businessId?.value;
+  const a = address(c);
+  const bl = businessLine(c);
+  const bits = [companyForm(c), a?.text?.split(", ").at(-1), bl ? `${bl.code} ${bl.name}` : null].filter(Boolean);
+  const st = isActive(c) ? null : statusText(c);
+  return `${currentName(c)} (${id})${bits.length ? `, ${bits.join(" · ")}` : ""}${st ? ` [${st}]` : ""}`;
+}
+
+async function kaupparekisteriIlmoitukset(args) {
+  const budget = newBudget(15);
+  const start = isoDate(args.alkaen, "alkaen");
+  const end = isoDate(args.asti, "asti");
+  let topic = null;
+  if (args.asia) {
+    topic = resolveTopic(args.asia);
+    if (!topic) throw new UserError(`Asiaa "${args.asia}" ei tunnistettu. Esimerkkejä: uudet yritykset, konkurssi, selvitystila, saneeraus, purkautuminen, poistouhka, hallitus, toimitusjohtaja, toiminimi, kotipaikka, tilinpäätös, sulautuminen, tai rekisterimerkinnän koodi (esim. KONALK).`);
+    if (topic.ambiguous) throw new UserError(`Asia "${args.asia}" sopii useaan rekisterimerkintään. Valitse koodi:\n${topic.ambiguous.map(([c, d]) => `- ${c} ${d}`).join("\n")}`);
+  }
+  let ntype = null;
+  if (args.ilmoitustyyppi) {
+    ntype = resolveNoticeType(args.ilmoitustyyppi);
+    if (!ntype) throw new UserError(`Ilmoitustyyppiä "${args.ilmoitustyyppi}" ei tunnistettu. Vaihtoehdot: ${Object.values(NOTICE_TYPES).join(", ")}.`);
+  }
+  const type = ntype ?? topic?.type ?? null;
+
+  // Yksi yritys: kaikki ilmoitukset uusimmasta alkaen.
+  const id = String(args.y_tunnus ?? "").trim();
+  if (id) {
+    if (!/^\d{7}-\d$/.test(id)) throw new UserError("Anna y-tunnus muodossa 1234567-8.");
+    const c = await companyNotices(id, budget);
+    if (!c) return `Y-tunnuksella ${id} ei löytynyt yritystä kaupparekisterin ilmoituksista. Toiminimet ja yhdistykset eivät ole tässä aineistossa.`;
+    let list = uniqueNotices(c).sort((x, y) => (x.registrationDate < y.registrationDate ? 1 : x.registrationDate > y.registrationDate ? -1 : 0));
+    if (start) list = list.filter((n) => n.registrationDate >= start);
+    if (end) list = list.filter((n) => n.registrationDate <= end);
+    if (type) list = list.filter((n) => n.typeOfRegistration === type);
+    if (topic) list = list.filter((n) => (n.entryCodes ?? []).includes(topic.entryCode));
+    const out = [companyHead(c), ""];
+    const filt = [topic && topic.label, type && !topic?.type && NOTICE_TYPES[type], (start || end) && `${start ? fmtDate(start) : ""}–${end ? fmtDate(end) : ""}`].filter(Boolean).join(", ");
+    out.push(`Rekisteröidyt ilmoitukset${filt ? ` (${filt})` : ""}: ${list.length}${list.length > KREK_MAX_LIST ? `, näytetään ${KREK_MAX_LIST} uusinta` : ""}.`);
+    for (const n of list.slice(0, KREK_MAX_LIST)) out.push(`- ${noticeLine(n, 12)}`);
+    out.push("", `Yrityksen perustiedot: ${ytjWebUrl(id)}`, "Aineistossa ovat ilmoituksen päivä, diaarinumero, tyyppi ja rekisteröidyt asiat, ei ilmoituksen tekstiä. Tarkemmat tiedot ja asiakirjat ovat PRH:n Virre-tietopalvelussa.", KREK_SOURCE);
+    return clip(out.join("\n"));
+  }
+
+  const name = String(args.nimi ?? "").trim();
+  const location = String(args.paikkakunta ?? "").trim();
+  if (!name && !location && !topic) {
+    throw new UserError("Koko maan haku vaatii asian (esim. uudet yritykset, konkurssi, selvitystila). Muuten rajaa paikkakunnalla tai nimellä, tai anna Y-tunnus.");
+  }
+  let form = null;
+  if (args.yritysmuoto) {
+    const s = String(args.yritysmuoto).trim();
+    form = KREK_FORMS.find((f) => f === s.toUpperCase()) ?? Object.entries(COMPANY_FORMS).find(([, d]) => d.toLowerCase() === s.toLowerCase())?.[0];
+    if (!form) throw new UserError(`Yritysmuotoa "${s}" ei tunnistettu. Käytä lyhennettä, esim. OY, KY, AY, OK, OYJ, AOY.`);
+  }
+  // Oletusaikaväli hauille: viimeiset 30 päivää (nimihaussa ei rajausta).
+  let from = start;
+  let to = end;
+  if (!from && !to && !name) {
+    const d = new Date(Date.now() - 30 * 86400_000);
+    from = d.toISOString().slice(0, 10);
+  }
+  const params = {
+    name: name || undefined,
+    location: location || undefined,
+    companyForm: form || undefined,
+    entryCode: topic?.entryCode,
+    noticeRegistrationType: type || undefined,
+    noticeRegistrationDateStart: from || undefined,
+    noticeRegistrationDateEnd: to || undefined,
+  };
+  const ind = args.toimiala ? resolveIndustry(args.toimiala) : null;
+  const page = Math.max(1, Number.parseInt(args.sivu, 10) || 1);
+
+  let total;
+  let companies;
+  let scanned = null;
+  if (ind) {
+    // Toimialaa ei voi rajata rajapinnassa, joten sivut käydään läpi ja suodatetaan tässä.
+    const first = await searchNotices({ ...params, page: 1 }, budget);
+    total = first.total;
+    const pages = Math.min(Math.ceil(total / PAGE_SIZE), KREK_SCAN_PAGES);
+    const rest = await mapLimit(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 4, (p) => searchNotices({ ...params, page: p }, budget));
+    const all = [first, ...rest].flatMap((r) => r.companies);
+    scanned = all.length;
+    companies = all.filter((c) => String(c.mainBusinessLine?.type ?? "").startsWith(ind.code));
+  } else {
+    const r = await searchNotices({ ...params, page }, budget);
+    total = r.total;
+    companies = r.companies;
+  }
+
+  const latest = (c) => (c.publicNotices ?? []).reduce((m, n) => (n.registrationDate > m ? n.registrationDate : m), "");
+  companies.sort((a, b) => (latest(a) < latest(b) ? 1 : latest(a) > latest(b) ? -1 : 0));
+
+  const crit = [
+    topic && topic.label,
+    type && !topic?.type && `ilmoitustyyppi ${NOTICE_TYPES[type]}`,
+    name && `nimi "${name}"`,
+    location && `postitoimipaikka ${location}`,
+    form && `yritysmuoto ${form}`,
+    ind && `toimiala ${ind.code}${ind.name ? ` ${ind.name}` : ""}`,
+    (from || to) && `ilmoitukset ${from ? fmtDate(from) : ""}–${to ? fmtDate(to) : fmtDate(new Date().toISOString())}`,
+  ].filter(Boolean);
+  const out = [`Kaupparekisterin ilmoitukset: ${crit.join(", ")}.`];
+  if (ind) {
+    out.push(`Ehtoihin osuu ${nf.format(total)} yritystä; niistä käytiin läpi ${scanned}${total > scanned ? ` (enintään ${KREK_SCAN_PAGES * PAGE_SIZE}, rajaa aikaväliä tai paikkakuntaa)` : ""}, ja toimialaan osuu ${companies.length}.`);
+  } else {
+    const pages = Math.ceil(total / PAGE_SIZE);
+    out.push(`${nf.format(total)} ${total === 1 ? "yritys" : "yritystä"}${pages > 1 ? `, sivu ${page}/${pages} (${PAGE_SIZE} yritystä sivulla)` : ""}.`);
+  }
+  if (!companies.length) {
+    out.push("", "Ei tuloksia.", KREK_SOURCE);
+    return out.join("\n");
+  }
+  out.push("");
+  for (const c of companies.slice(0, ind ? 60 : PAGE_SIZE)) {
+    out.push(`- ${companyHead(c)}`);
+    for (const n of uniqueNotices(c).sort((x, y) => (x.registrationDate < y.registrationDate ? 1 : -1)).slice(0, 3)) out.push(`  ${noticeLine(n)}`);
+  }
+  if (!ind && page < Math.ceil(total / PAGE_SIZE)) out.push("", `Lisää tuloksia: sivu ${page + 1}.`);
+  out.push(
+    "",
+    "Postitoimipaikka on yrityksen osoitteen postitoimipaikka, ei välttämättä kotikunta. Yritykset ovat sivun sisällä uusimman ilmoituksen mukaan. Aineistossa ovat ilmoituksen päivä, diaarinumero, tyyppi ja rekisteröidyt asiat, ei ilmoituksen tekstiä. Toiminimet eivät ole kaupparekisterin avoimessa datassa.",
+    KREK_SOURCE,
+  );
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -1188,6 +1374,7 @@ const HANDLERS = {
   tilasto,
   hae_julkisia_palveluja: haeJulkisiaPalveluja,
   julkinen_palvelu: julkinenPalvelu,
+  kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
 };
 
 export async function callTool(name, args = {}, env = {}) {
