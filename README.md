@@ -21,6 +21,8 @@ Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokes
 | `hae_tilastoja` | Tilastokeskuksen StatFin-taulukoiden haku hakusanalla (taulukon tunnus, otsikko, päivitys) |
 | `tilaston_rakenne` | StatFin-taulukon muuttujat ja arvot (koodi ja teksti), aikamuuttujan alku ja loppu |
 | `tilasto` | Luvut StatFin-taulukosta valinnoilla (muuttuja ja arvot koodeina tai teksteinä, "viimeiset N"), enintään 3 000 solua |
+| `hae_julkisia_palveluja` | Kunnan tai hyvinvointialueen julkiset palvelut Suomi.fi-palvelutietovarannosta nimen sanalla |
+| `julkinen_palvelu` | Palvelun kuvaus, kenelle ja miten haetaan, maksut, palveluseteli, lainsäädäntö ja asiointikanavat (puhelin, osoite, aukiolo) |
 | `korot` | Korkolain viitekorko ja viivästyskorot (4 ja 4 a §) annettuna päivänä, EKP:n ohjauskorot, viitekorkojen historia vuodesta 2009 |
 
 ## Tärkeä rajoitus
@@ -38,6 +40,7 @@ YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, 
 - Digitaaliset tilinpäätökset: `https://avoindata.prh.fi/opendata-xbrl-api/v3` (PRH, CC BY 4.0; kuvaus `/schema?lang=fi`). Tilikaudet `/financials?businessId=`, tilinpäätös XBRL-muodossa `/financial?businessId=&financialDate=`. Mukana vain iXBRL-muodossa ilmoitetut tilinpäätökset (tilikaudelta, joka päättyi 31.12.2025, 11 925 yritystä). Erien nimet SBR-taksonomiasta (Valtiokonttori, SBR-DPM-2026-06-02, avoindata.fi, CC BY 4.0), `src/sbrLabels.js`. Etumerkkikäytäntö vaihtelee ilmoittajittain, joten se päätellään tilinpäätöskohtaisesti (kulut positiivisina, rahoituserien netto tarkistetaan laskentakaavasta).
 - Yhteisöjen verotiedot: Verohallinnon avoin data (`https://www.vero.fi/avoindata`, CC BY 4.0), yhteisöjen tuloverotuksen julkiset tiedot vuodesta 2020 ja muutosverotustiedot vuodesta 2022. CSV-tiedostot (n. 27 Mt, 380 000 riviä vuodessa) ladataan D1-kantaan: ajastettu tehtävä tarkistaa sivun linkit vuorokauden välein ja lataa uuden tai muuttuneen tiedoston (ETag, Last-Modified) virtana. Kanta on sama `aluetieto-sotkanet` (EU-lainkäyttöalue), taulut `vero`, `vero_muutos` ja `vero_files`.
 - StatFin: `https://pxdata.stat.fi/PxWeb/api/v1/fi/StatFin` (Tilastokeskus, CC BY 4.0). Haku `?query=`, rakenne GET ja kysely POST (json-stat2) osoitteeseen `/{alue}/{taulukko}.px`. Valitsematta jätetty aikamuuttuja saa viimeisimmän arvon, eliminoitava muuttuja jätetään pois (yhteensä) ja muu muuttuja ensimmäisen arvon; oletukset kerrotaan tulosteessa. Välimuisti 1 vrk.
+- Palvelutietovaranto: `https://api.palvelutietovaranto.suomi.fi/api/v11` (Digi- ja väestötietovirasto; avoin lukurajapinta, avoindata.fi: CC0 1.0). Alueen palvelut `/Service/area/{Municipality|WellbeingServiceCounties}/code/{koodi}`, palvelu `/Service/{id}`, kanavat `/ServiceChannel/list?guids=`. Rajapinnassa ei ole tekstihakua, joten palvelut haetaan alueen mukaan ja rajataan nimellä. Mukana on myös yritysten markkinaehtoisia palveluja. Välimuisti 1 vrk.
 - Toimialaluokitus TOL 2025: `src/tol2025.js`, generoitu Tilastokeskuksen luokituspalvelusta.
 - Välimuisti: YTJ 12 h, Paavon metatiedot 1 vrk, tilastokyselyt 7 vrk (Cloudflaren Cache API).
 

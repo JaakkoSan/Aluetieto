@@ -20,6 +20,7 @@ import { TOL2025 } from "./tol2025.js";
 import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yearBefore, ecbRates, rateOn, referenceRate, periodStart, periodEnd, FIRST_REFERENCE_PERIOD } from "./talous.js";
 import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
 import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
+import { resolvePtvArea, servicesInArea, service, channels, channelText, serviceSummary, PTV_SOURCE } from "./ptv.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
@@ -224,6 +225,32 @@ export const TOOLS = [
     },
   },
   {
+    name: "hae_julkisia_palveluja",
+    description:
+      "Hakee kunnan tai hyvinvointialueen julkisia palveluja Suomi.fi-palvelutietovarannosta (kunnat, hyvinvointialueet, valtion virastot): palvelun nimi ja tunniste. Rajaa hakusanalla, esim. \"kotihoito\", \"palveluseteli\", \"omaishoito\". Palvelun tiedot (kuvaus, palveluseteli, maksut, yhteystiedot) julkinen_palvelu-työkalulla.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        alue: { type: "string", description: "Kunta tai hyvinvointialue, esim. \"Kotka\" tai \"Kymenlaakson hyvinvointialue\"." },
+        hakusana: { type: "string", description: "Sana palvelun nimestä. Valinnainen; ilman hakusanaa koko luettelo." },
+        koko_maa: { type: "boolean", description: "true = myös koko maata koskevat palvelut (esim. Kela, Verohallinto)." },
+      },
+      required: ["alue"],
+    },
+  },
+  {
+    name: "julkinen_palvelu",
+    description:
+      "Palauttaa julkisen palvelun tiedot Suomi.fi-palvelutietovarannosta: vastuuorganisaatio ja tuottajat, alue, tiivistelmä ja kuvaus, kenelle palvelu on ja miten haetaan, maksullisuus, palveluseteli, lainsäädäntö sekä asiointikanavat (puhelin, osoite, verkkosivu, aukioloajat).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        palvelu: { type: "string", description: "Palvelun tunniste hae_julkisia_palveluja-työkalulta (GUID)." },
+      },
+      required: ["palvelu"],
+    },
+  },
+  {
     name: "hintaindeksi",
     description:
       "Kuluttajahintaindeksin tai elinkustannusindeksin pisteluvut ja vuosimuutos kuukausittain (Tilastokeskus). Oletuksena viimeiset 13 kuukautta. Inflaatio, hintojen nousu, indeksisidonnaiset sopimukset.",
@@ -284,6 +311,8 @@ const TITLES = {
   hae_tilastoja: "Hae tilastoja (StatFin)",
   tilaston_rakenne: "Tilaston rakenne (StatFin)",
   tilasto: "Tilasto (StatFin)",
+  hae_julkisia_palveluja: "Hae julkisia palveluja (Suomi.fi)",
+  julkinen_palvelu: "Julkinen palvelu (Suomi.fi)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -1077,6 +1106,69 @@ async function tilasto(args) {
   return clip(out.join("\n"));
 }
 
+// ---------- Suomi.fi-palvelutietovaranto ----------
+
+const ROLE_FI = { Responsible: "vastuuorganisaatio", Producer: "tuottaja", OtherResponsible: "muu vastuuorganisaatio" };
+const PROVISION_FI = { SelfProducedServices: "oma tuotanto", ProcuredServices: "ostopalvelu", Other: "muu", PurchaseServices: "ostopalvelu", VoucherServices: "palveluseteli" };
+const CHARGE_FI = { Chargeable: "maksullinen", FreeOfCharge: "maksuton", Other: "muu" };
+const cut = (t, n) => (t && t.length > n ? `${t.slice(0, n)} …` : t);
+
+async function haeJulkisiaPalveluja(args) {
+  const budget = newBudget(15);
+  const area = await resolvePtvArea(args.alue, budget);
+  if (!area) throw new UserError(`Aluetta "${args.alue}" ei löytynyt. Anna kunta tai hyvinvointialue, esim. "Kymenlaakson hyvinvointialue".`);
+  if (area.ambiguous) throw new UserError(`"${args.alue}" vastaa useaa aluetta: ${area.ambiguous.join(", ")}.`);
+  let list = await servicesInArea(area, { wholeCountry: args.koko_maa === true, budget });
+  const q = String(args.hakusana ?? "").trim().toLowerCase();
+  if (q) list = list.filter((x) => String(x.name ?? "").toLowerCase().includes(q));
+  list.sort((a, b) => (String(a.name) < String(b.name) ? -1 : String(a.name) > String(b.name) ? 1 : 0));
+  const out = [`Julkiset palvelut, ${area.name}${q ? `, nimessä "${args.hakusana}"` : ""}${args.koko_maa ? " (myös koko maata koskevat)" : ""}: ${list.length} kpl.`, ""];
+  if (!list.length) out.push("Ei osumia. Kokeile sanan osaa (esim. \"koti\") tai ilman hakusanaa.");
+  for (const x of list.slice(0, 200)) out.push(`- ${x.name} (${x.id})`);
+  if (list.length > 200) out.push(`… ${list.length - 200} lisää; rajaa hakusanalla.`);
+  out.push("", "Palvelun tiedot: julkinen_palvelu (palvelu: tunniste). Luettelossa ovat palvelut, joiden alueeksi on merkitty tämä alue; palvelun tarjoaja voi olla kunta, hyvinvointialue tai valtion virasto.", PTV_SOURCE);
+  return clip(out.join("\n"));
+}
+
+async function julkinenPalvelu(args) {
+  const id = String(args.palvelu ?? "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new UserError("Anna palvelun tunniste (GUID) hae_julkisia_palveluja-työkalulta.");
+  const budget = newBudget(5);
+  const raw = await service(id, budget);
+  if (!raw) throw new UserError(`Palvelua ${id} ei löytynyt palvelutietovarannosta.`);
+  const s = serviceSummary(raw);
+  const out = [s.name ?? "(nimetön palvelu)"];
+  const orgs = s.orgs.filter((o) => o.name).map((o) => `${o.name} (${ROLE_FI[o.role] ?? o.role}${o.provision ? `, ${PROVISION_FI[o.provision] ?? o.provision}` : ""})`);
+  if (orgs.length) out.push(`Organisaatiot: ${[...new Set(orgs)].join("; ")}`);
+  const meta = [s.funding === "PubliclyFunded" ? "julkisesti rahoitettu" : s.funding === "MarketFunded" ? "markkinaehtoinen" : null, s.charge ? CHARGE_FI[s.charge] ?? s.charge : null].filter(Boolean);
+  if (meta.length) out.push(`Palvelu: ${meta.join(", ")}`);
+  if (s.areaType === "Nationwide") out.push("Alue: koko maa");
+  else if (s.areas.length) out.push(`Alue: ${s.areas.join(", ")}`);
+  if (s.vouchers) out.push(`Palveluseteli: käytössä${s.vouchers.length ? ` (${s.vouchers.join("; ")})` : ""}`);
+  for (const [label, text, n] of [
+    ["Tiivistelmä", s.summary, 600],
+    ["Kuvaus", s.description, 2500],
+    ["Kenelle ja edellytykset", s.requirements, 1500],
+    ["Miten asioin", s.instruction, 1200],
+    ["Maksut", s.chargeInfo, 1000],
+    ["Määräaika", s.deadline, 400],
+    ["Käsittelyaika", s.processing, 400],
+    ["Voimassaolo", s.validity, 400],
+  ]) {
+    if (text) out.push("", `${label}:`, cut(text, n));
+  }
+  if (s.legislation.length) out.push("", `Lainsäädäntö: ${s.legislation.slice(0, 10).join("; ")}`);
+  const chs = await channels(s.channelIds.slice(0, 12), budget).catch(() => []);
+  if (chs.length) {
+    out.push("", "Asiointikanavat:");
+    for (const c of chs) out.push(`- ${channelText(c)}`);
+    if (s.channelIds.length > 12) out.push(`… ja ${s.channelIds.length - 12} muuta kanavaa.`);
+  }
+  if (s.modified) out.push("", `Päivitetty palvelutietovarantoon: ${fmtDate(s.modified)}. Tarkista ajantasaisuus organisaation sivuilta.`);
+  out.push(PTV_SOURCE);
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -1094,6 +1186,8 @@ const HANDLERS = {
   hae_tilastoja: haeTilastoja,
   tilaston_rakenne: tilastonRakenne,
   tilasto,
+  hae_julkisia_palveluja: haeJulkisiaPalveluja,
+  julkinen_palvelu: julkinenPalvelu,
 };
 
 export async function callTool(name, args = {}, env = {}) {
