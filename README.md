@@ -18,6 +18,9 @@ Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokes
 | `indeksitarkistus` | Indeksitarkistus kahden kuukauden tai vuosikeskiarvon välillä: muutosprosentti, kerroin ja tarkistettu summa (esim. vuokra) |
 | `yrityksen_talous` | PRH:n digitaalinen tilinpäätös (tuloslaskelma ja tase, vertailuvuosi) ja Verohallinnon julkiset verotiedot vuosittain Y-tunnuksella tai nimellä |
 | `yhteisoverot` | Kunnan tai koko maan yhteisöt maksuunpantujen verojen tai verotettavan tulon mukaan, nimen osalla rajattuna, yhteissummat |
+| `hae_tilastoja` | Tilastokeskuksen StatFin-taulukoiden haku hakusanalla (taulukon tunnus, otsikko, päivitys) |
+| `tilaston_rakenne` | StatFin-taulukon muuttujat ja arvot (koodi ja teksti), aikamuuttujan alku ja loppu |
+| `tilasto` | Luvut StatFin-taulukosta valinnoilla (muuttuja ja arvot koodeina tai teksteinä, "viimeiset N"), enintään 3 000 solua |
 | `korot` | Korkolain viitekorko ja viivästyskorot (4 ja 4 a §) annettuna päivänä, EKP:n ohjauskorot, viitekorkojen historia vuodesta 2009 |
 
 ## Tärkeä rajoitus
@@ -34,6 +37,7 @@ YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, 
 - Viitekorko lasketaan korkolain (633/1982) 12 §:n mukaan: EKP:n perusrahoitusoperaatioiden viimeisin korko ennen puolivuotiskauden ensimmäistä päivää pyöristettynä ylöspäin puoleen prosenttiyksikköön. Viivästyskorko on viitekorko + 7 (4 §) ja kaupallisissa sopimuksissa + 8 prosenttiyksikköä (4 a §). Laskenta alkaa vuodesta 2009, koska perusrahoitusoperaatiot olivat 2000–2008 vaihtuvakorkoisia. Suomen Pankki julkaisee virallisen viitekoron; laskettu arvo tarkistettiin sen tiedotteesta kaudelle 1.7.–31.12.2026 (2,5 %).
 - Digitaaliset tilinpäätökset: `https://avoindata.prh.fi/opendata-xbrl-api/v3` (PRH, CC BY 4.0; kuvaus `/schema?lang=fi`). Tilikaudet `/financials?businessId=`, tilinpäätös XBRL-muodossa `/financial?businessId=&financialDate=`. Mukana vain iXBRL-muodossa ilmoitetut tilinpäätökset (tilikaudelta, joka päättyi 31.12.2025, 11 925 yritystä). Erien nimet SBR-taksonomiasta (Valtiokonttori, SBR-DPM-2026-06-02, avoindata.fi, CC BY 4.0), `src/sbrLabels.js`. Etumerkkikäytäntö vaihtelee ilmoittajittain, joten se päätellään tilinpäätöskohtaisesti (kulut positiivisina, rahoituserien netto tarkistetaan laskentakaavasta).
 - Yhteisöjen verotiedot: Verohallinnon avoin data (`https://www.vero.fi/avoindata`, CC BY 4.0), yhteisöjen tuloverotuksen julkiset tiedot vuodesta 2020 ja muutosverotustiedot vuodesta 2022. CSV-tiedostot (n. 27 Mt, 380 000 riviä vuodessa) ladataan D1-kantaan: ajastettu tehtävä tarkistaa sivun linkit vuorokauden välein ja lataa uuden tai muuttuneen tiedoston (ETag, Last-Modified) virtana. Kanta on sama `aluetieto-sotkanet` (EU-lainkäyttöalue), taulut `vero`, `vero_muutos` ja `vero_files`.
+- StatFin: `https://pxdata.stat.fi/PxWeb/api/v1/fi/StatFin` (Tilastokeskus, CC BY 4.0). Haku `?query=`, rakenne GET ja kysely POST (json-stat2) osoitteeseen `/{alue}/{taulukko}.px`. Valitsematta jätetty aikamuuttuja saa viimeisimmän arvon, eliminoitava muuttuja jätetään pois (yhteensä) ja muu muuttuja ensimmäisen arvon; oletukset kerrotaan tulosteessa. Välimuisti 1 vrk.
 - Toimialaluokitus TOL 2025: `src/tol2025.js`, generoitu Tilastokeskuksen luokituspalvelusta.
 - Välimuisti: YTJ 12 h, Paavon metatiedot 1 vrk, tilastokyselyt 7 vrk (Cloudflaren Cache API).
 

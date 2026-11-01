@@ -22,7 +22,7 @@ function check(cond, label) {
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
 check(init.result?.serverInfo?.name === "aluetieto", "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 13 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (13, readOnlyHint)");
+check(list.result?.tools?.length === 16 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (16, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -46,6 +46,10 @@ const cases = [
   ["yrityksen_talous", { y_tunnus: "0100379-9", tilikausi: "2024-12-31" }, (t) => t.includes("Asuntotekniikka Oy") && /Rahoitustuotot ja -kulut \(netto, \+ = tuotto\): 13.493/.test(t) && t.includes("ei ole kytketty")],
   ["yrityksen_talous", { y_tunnus: "2474190-3" }, (t) => t.includes("ei ole digitaalista tilinpäätöstä")],
   ["yhteisoverot", { kunta: "Kotka" }, (t) => t.includes("ei ole kytketty")],
+  ["hae_tilastoja", { hakusana: "väestö iän ja sukupuolen mukaan" }, (t) => t.includes("vaerak/") && t.includes("StatFin")],
+  ["tilaston_rakenne", { taulukko: "vaerak/11rc" }, (t) => t.includes("ikaryhma_10_20180101 (Ikä)") && t.includes("85- = 85 -")],
+  ["tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "2024", Ikä: ["75 - 79", "80 - 84", "85 -"] } }, (t) => /75 - 79: 310.766/.test(t)],
+  ["tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "*", Ikä: "*", Sukupuoli: "*" } }, (t) => t.includes("enintään 3000")],
   ["korot", { paiva: "2024-03-15" }, (t) => t.includes("4,5 %") && t.includes("11,5 %")],
 ];
 for (const [name, args, pred] of cases) {

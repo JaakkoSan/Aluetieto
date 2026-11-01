@@ -19,6 +19,7 @@ import { postAreas, areasOfMunicipality, population, establishments, establishme
 import { TOL2025 } from "./tol2025.js";
 import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yearBefore, ecbRates, rateOn, referenceRate, periodStart, periodEnd, FIRST_REFERENCE_PERIOD } from "./talous.js";
 import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
+import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
 const MAX_OUTPUT = 50_000;
@@ -183,6 +184,46 @@ export const TOOLS = [
     },
   },
   {
+    name: "hae_tilastoja",
+    description:
+      "Hakee Tilastokeskuksen StatFin-tietokannan taulukoita hakusanalla (esim. \"työttömyysaste\", \"kotitalouksien velat\", \"yritykset toimialoittain\", \"väestöennuste\"). Palauttaa taulukon tunnuksen (esim. tyti/135z), otsikon ja päivityspäivän. Rakenne tilaston_rakenne-työkalulla ja luvut tilasto-työkalulla.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hakusana: { type: "string", description: "Hakusanat, esim. \"työllisyysaste kunnittain\"." },
+        sivu: { type: "integer", description: "Tulossivu, 1 = ensimmäinen (20 taulukkoa sivulla)." },
+      },
+      required: ["hakusana"],
+    },
+  },
+  {
+    name: "tilaston_rakenne",
+    description:
+      "Palauttaa StatFin-taulukon muuttujat ja niiden arvot (koodi ja teksti), aikamuuttujan alku ja loppu sekä tiedon, voiko muuttujan jättää valitsematta (summa). Käytä ennen tilasto-työkalua valintojen muodostamiseen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taulukko: { type: "string", description: "Taulukon tunnus hae_tilastoja-työkalulta, esim. \"tyti/135z\"." },
+        muuttuja: { type: "string", description: "Näytä tämän muuttujan kaikki arvot (koodi tai nimi). Valinnainen." },
+        hakusana: { type: "string", description: "Rajaa muuttujan arvot tekstillä, esim. kunnan nimi. Valinnainen." },
+      },
+      required: ["taulukko"],
+    },
+  },
+  {
+    name: "tilasto",
+    description:
+      "Hakee luvut StatFin-taulukosta. valinnat: { muuttuja: arvo tai [arvot] }, muuttuja koodina tai nimenä, arvo koodina tai tekstinä; \"*\" = kaikki, \"viimeiset 5\" = aikamuuttujan viimeiset. Valitsematta jätetyt: aika = viimeisin, eliminoitava = yhteensä, muut = ensimmäinen arvo. Enintään 3 000 solua.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taulukko: { type: "string", description: "Taulukon tunnus, esim. \"vaerak/11rc\"." },
+        valinnat: { type: "object", description: "Esim. {\"Vuosi\": \"viimeiset 3\", \"Ikä\": [\"75 - 79\", \"80 - 84\"], \"Sukupuoli\": \"Naiset\"}.", additionalProperties: true },
+      },
+      required: ["taulukko"],
+    },
+  },
+  {
     name: "hintaindeksi",
     description:
       "Kuluttajahintaindeksin tai elinkustannusindeksin pisteluvut ja vuosimuutos kuukausittain (Tilastokeskus). Oletuksena viimeiset 13 kuukautta. Inflaatio, hintojen nousu, indeksisidonnaiset sopimukset.",
@@ -240,6 +281,9 @@ const TITLES = {
   korot: "Viitekorko, viivästyskorko ja EKP:n korot",
   yrityksen_talous: "Yrityksen talous (tilinpäätös ja verotiedot)",
   yhteisoverot: "Yhteisöjen verotiedot",
+  hae_tilastoja: "Hae tilastoja (StatFin)",
+  tilaston_rakenne: "Tilaston rakenne (StatFin)",
+  tilasto: "Tilasto (StatFin)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -936,6 +980,103 @@ async function yhteisoverot(args, env) {
   return clip(out.join("\n"));
 }
 
+// ---------- Tilastokeskus StatFin: yleinen taulukkohaku ----------
+
+function asTableId(v) {
+  const id = parseTableId(v);
+  if (!id) throw new UserError('Anna taulukon tunnus muodossa "alue/taulukko", esim. "tyti/135z" (hae_tilastoja-työkalulta).');
+  return id;
+}
+
+async function haeTilastoja(args) {
+  const q = String(args.hakusana ?? "").trim();
+  if (!q) throw new UserError("Anna hakusana.");
+  const page = Math.max(1, Number(args.sivu) || 1);
+  const all = await searchTables(q, newBudget(3));
+  if (!all.length) return `StatFin-taulukoita ei löytynyt hakusanalla "${q}". Kokeile perusmuotoa tai lyhyempää hakua (haku vertaa sanoja sellaisinaan).`;
+  const list = all.slice((page - 1) * 20, page * 20);
+  const out = [`StatFin-taulukot hakusanalla "${q}": ${all.length} osumaa, sivu ${page} (osuvin ensin).`, ""];
+  for (const t of list) out.push(`${t.id} ${t.title}${t.published ? ` (päivitetty ${fmtDate(t.published)})` : ""}`);
+  if (all.length > page * 20) out.push("", `Lisää: sivu ${page + 1}.`);
+  out.push("", "Rakenne: tilaston_rakenne (taulukko). Luvut: tilasto (taulukko, valinnat).", STATFIN_SOURCE);
+  return clip(out.join("\n"));
+}
+
+function valueList(v, filter, all) {
+  const pairs = v.values.map((c, i) => ({ c, t: v.texts[i] }));
+  let list = pairs;
+  if (filter) list = pairs.filter((p) => p.t.toLowerCase().includes(filter.toLowerCase()) || p.c.toLowerCase() === filter.toLowerCase());
+  const fmtP = (p) => (p.c === p.t ? p.c : `${p.c} = ${p.t}`);
+  if (all || filter || list.length <= 40) return list.slice(0, 400).map(fmtP).join("; ") + (list.length > 400 ? ` … (${list.length} arvoa)` : "");
+  if (v.time) return `${fmtP(list[0])} … ${fmtP(list.at(-1))} (${list.length} arvoa)`;
+  return `${list.slice(0, 20).map(fmtP).join("; ")} … (${list.length} arvoa; kaikki: muuttuja-parametrilla, rajaus: hakusana)`;
+}
+
+async function tilastonRakenne(args) {
+  const id = asTableId(args.taulukko);
+  const meta = await tableMeta(id, newBudget(3));
+  if (!meta) throw new UserError(`Taulukkoa ${id.area}/${id.table} ei löytynyt StatFinistä.`);
+  const out = [`${id.area}/${id.table}: ${meta.title}`, ""];
+  const pick = args.muuttuja ? String(args.muuttuja).trim().toLowerCase() : null;
+  for (const v of meta.variables) {
+    if (pick && v.code.toLowerCase() !== pick && v.text.toLowerCase() !== pick) continue;
+    const flags = [v.time ? "aikamuuttuja" : null, v.elimination ? "voi jättää valitsematta (yhteensä)" : null].filter(Boolean);
+    out.push(`${v.code} (${v.text})${flags.length ? ` [${flags.join(", ")}]` : ""}:`);
+    out.push(`  ${valueList(v, args.hakusana ? String(args.hakusana) : null, !!pick)}`);
+  }
+  if (out.length === 2) throw new UserError(`Muuttujaa "${args.muuttuja}" ei ole. Muuttujat: ${meta.variables.map((v) => `${v.code} (${v.text})`).join(", ")}.`);
+  out.push("", "Hae luvut tilasto-työkalulla, esim. valinnat: {\"" + meta.variables[0].text + "\": \"viimeiset 3\"}.", STATFIN_SOURCE);
+  return clip(out.join("\n"));
+}
+
+const fmtNum = (v) => {
+  if (v === null || v === undefined) return "..";
+  if (!Number.isFinite(v)) return String(v);
+  const [i, d] = String(v).split(".");
+  return i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d ? `,${d}` : "");
+};
+
+async function tilasto(args) {
+  const id = asTableId(args.taulukko);
+  const budget = newBudget(3);
+  const meta = await tableMeta(id, budget);
+  if (!meta) throw new UserError(`Taulukkoa ${id.area}/${id.table} ei löytynyt StatFinistä.`);
+  let built;
+  try {
+    built = buildQuery(meta, args.valinnat ?? {});
+  } catch (e) {
+    throw new UserError(e.message);
+  }
+  const ds = await runQuery(id, built.query, budget);
+  const { dims, rows } = rowsOf(ds);
+  const fixed = dims.filter((d) => d.codes.length === 1);
+  const varying = dims.map((d, i) => ({ d, i })).filter(({ d }) => d.codes.length > 1);
+  const out = [`${id.area}/${id.table}: ${meta.title}`];
+  if (ds.updated) out.push(`Päivitetty: ${fmtDate(ds.updated)}`);
+  if (fixed.length) out.push(`Rajaus: ${fixed.map((d) => `${d.label} = ${d.labels[0]}`).join("; ")}`);
+  if (built.notes.length) out.push(`Oletusvalinnat: ${built.notes.join("; ")}`);
+  const ud = dims.find((d) => d.unit);
+  if (ud) {
+    const u = ud.codes
+      .map((k, i) => ({ name: ud.labels[i], label: ud.unit[k]?.label }))
+      .filter((x) => x.label && String(x.label).trim());
+    if (u.length && u.length <= 10) out.push(`Yksiköt: ${u.map((x) => `${x.name}: ${x.label}`).join("; ")}`);
+  }
+  out.push("");
+  if (varying.length) out.push(varying.map(({ d }) => d.label).join(" | ") + " : arvo");
+  for (const r of rows) {
+    const lab = varying.map(({ i }) => r.labels[i]).join(" | ");
+    out.push(`${lab || "Arvo"}: ${fmtNum(r.value)}${r.status ? ` (${r.status})` : ""}`);
+  }
+  const notes = ds.note ?? [];
+  const clean = notes
+    .map((n) => String(n).replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .filter((n) => n.length > 2);
+  if (clean.length) out.push("", ...clean.slice(0, 5).map((n) => `Huom: ${n.slice(0, 400)}`));
+  out.push("", `".." = tieto puuttuu tai on salassa pidettävä. ${STATFIN_SOURCE}, taulukko ${id.area}/${id.table}.`);
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -950,6 +1091,9 @@ const HANDLERS = {
   korot,
   yrityksen_talous: yrityksenTalous,
   yhteisoverot,
+  hae_tilastoja: haeTilastoja,
+  tilaston_rakenne: tilastonRakenne,
+  tilasto,
 };
 
 export async function callTool(name, args = {}, env = {}) {
