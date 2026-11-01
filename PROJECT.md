@@ -24,6 +24,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/yritystalous.js`: PRH:n digitaaliset tilinpäätökset (XBRL) ja Verohallinnon yhteisöverotiedot (D1-lataus ja kyselyt)
 - `src/sbrLabels.js`: SBR-taksonomian erien suomenkieliset nimet (generoitu)
 - `src/statfin.js`: StatFinin yleinen taulukkohaku, rakenne ja kysely (PxWeb, json-stat2)
+- `src/saavutettavuus.js`: väestö säteellä 1 km väestöruuduista ja Paavon postinumeroalueista (WFS)
 - `src/krek.js`, `src/krekCodes.js`: PRH:n kaupparekisterin rekisteröidyt ilmoitukset ja rekisterimerkintöjen otsikot
 - `src/ptv.js`: Suomi.fi-palvelutietovaranto (alueen palvelut, palvelun tiedot ja asiointikanavat)
 - `src/talous.js`: hintaindeksit (Tilastokeskus, StatFin/khi) ja korot (EKP:n rajapinta, korkolain viitekorko)
@@ -44,3 +45,4 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - 1.11.2026 v1.4: StatFinin yleinen taulukkohaku (hae_tilastoja, tilaston_rakenne, tilasto). Valinnat koodeina tai teksteinä, oletusvalinnat kerrotaan, enintään 3 000 solua.
 - 1.11.2026 v1.5: Suomi.fi-palvelutietovaranto (hae_julkisia_palveluja, julkinen_palvelu). Rajapinnassa ei ole tekstihakua; alueen palvelujen nimet haetaan (kevyt luettelo) ja rajataan nimellä, tiedot haetaan palvelu kerrallaan.
 - 1.11.2026 v1.6: kaupparekisteri_ilmoitukset (PRH:n rekisteröidyt ilmoitukset). Koko maan haku vaatii rekisterimerkinnän koodin, koska pelkkä aikaväli tai ilmoitustyyppi aikakatkaistaan rajapinnassa. Toimiala suodatetaan paikallisesti enintään 500 yrityksestä.
+- 1.11.2026 v1.7: saavutettavuusalue (väestö säteellä, postinumeroalueiden osuudet, toimialan yritykset). Ajoaika-alueet odottavat reitityspalvelun valintaa (openrouteservice tai Mapbox, molemmat vaativat avaimen).

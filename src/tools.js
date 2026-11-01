@@ -21,6 +21,7 @@ import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yea
 import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
 import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
 import { resolvePtvArea, servicesInArea, service, channels, channelText, serviceSummary, PTV_SOURCE } from "./ptv.js";
+import { haversineKm, bboxAround, summarize, postalCenter, SAAV_SOURCE } from "./saavutettavuus.js";
 import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryText, ytjWebUrl, NOTICE_TYPES, PAGE_SIZE, KREK_SOURCE } from "./krek.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 
@@ -313,6 +314,21 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: "saavutettavuusalue",
+    description:
+      "Laskee, paljonko asukkaita on annetun säteen sisällä pisteestä (Tilastokeskuksen 1 km väestöruudut): asukkaat, naiset ja miehet, ikäryhmät 0–14, 15–64 ja 65+, sekä postinumeroalueet osuuksineen. Valinnaisesti toimialan yritysmäärä (YTJ) alueella ja asukasta per yritys. Keskipisteeksi koordinaatit, postinumero (asutuksen keskipiste) tai yrityksen Y-tunnus.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keskipiste: { type: "string", description: "Koordinaatit leveysaste ensin (\"60.4635, 26.9403\") tai postinumero (\"48100\")." },
+        y_tunnus: { type: "string", description: "Vaihtoehtoisesti yrityksen Y-tunnus: keskipisteenä yrityksen postinumeroalue. Valinnainen." },
+        sade_km: { type: "number", description: "Säde kilometreinä linnuntietä (oletus 10, enintään 30)." },
+        toimiala: { type: "string", description: "TOL 2025 -koodi tai nimen osa, esim. \"96220\". Valinnainen: laskee alueen yritykset." },
+        kohderyhma: { type: "string", enum: ["kaikki", "naiset", "0-14", "15-64", "65+"], description: "Ryhmä, johon yritysmäärää verrataan (oletus kaikki)." },
+      },
+    },
+  },
 ];
 
 const TITLES = {
@@ -335,6 +351,7 @@ const TITLES = {
   hae_julkisia_palveluja: "Hae julkisia palveluja (Suomi.fi)",
   julkinen_palvelu: "Julkinen palvelu (Suomi.fi)",
   kaupparekisteri_ilmoitukset: "Kaupparekisterin ilmoitukset (PRH)",
+  saavutettavuusalue: "Saavutettavuusalue (väestö säteellä)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -1355,6 +1372,101 @@ async function kaupparekisteriIlmoitukset(args) {
   return clip(out.join("\n"));
 }
 
+// ---------- Saavutettavuusalue ----------
+
+const SAAV_MAX_KM = 30;
+const SAAV_MAX_CODES = 25;
+const GRID_TARGETS = {
+  kaikki: { key: "pop", label: "asukkaat" },
+  naiset: { key: "women", label: "naiset" },
+  "0-14": { key: "a0_14", label: "0–14-vuotiaat" },
+  "15-64": { key: "a15_64", label: "15–64-vuotiaat" },
+  "65+": { key: "a65", label: "65 vuotta täyttäneet" },
+};
+
+async function resolveCenter(args, budget) {
+  const raw = String(args.keskipiste ?? "").trim();
+  const m = raw.match(/^(-?\d{1,2}(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.,]\d+)?)$/);
+  if (m) {
+    const lat = +m[1].replace(",", ".");
+    const lon = +m[2].replace(",", ".");
+    if (lat < 59 || lat > 71 || lon < 19 || lon > 32) throw new UserError("Koordinaatit ovat Suomen ulkopuolella. Anna leveysaste ensin, esim. \"60.4635, 26.9403\".");
+    return { lat, lon, label: `piste ${lat.toFixed(5)}, ${lon.toFixed(5)}` };
+  }
+  let code = /^\d{5}$/.test(raw) ? raw : null;
+  let who = "";
+  if (!code && args.y_tunnus) {
+    const id = String(args.y_tunnus).trim();
+    if (!/^\d{7}-\d$/.test(id)) throw new UserError("Anna y-tunnus muodossa 1234567-8.");
+    const { companies } = await searchCompanies({ businessId: id }, { budget, ttl: 6 * 3600 });
+    const c = companies[0];
+    code = c ? address(c)?.postCode : null;
+    if (!code) throw new UserError(`Yrityksen ${id} osoitetta ei löytynyt YTJ:stä.`);
+    who = `${currentName(c)}, `;
+  }
+  if (!code) throw new UserError('Anna keskipiste: koordinaatit ("60.4635, 26.9403"), postinumero ("48100") tai y_tunnus.');
+  const c = await postalCenter(code, budget);
+  if (!c) throw new UserError(`Postinumeroaluetta ${code} ei löytynyt Paavo-aineistosta.`);
+  return { lat: c.lat, lon: c.lon, label: `${who}postinumeroalueen ${code} ${c.area.name} asutuksen keskipiste (${c.lat.toFixed(5)}, ${c.lon.toFixed(5)})` };
+}
+
+async function saavutettavuusalue(args) {
+  const budget = newBudget(30);
+  const km = Number(String(args.sade_km ?? "10").replace(",", "."));
+  if (!(km > 0) || km > SAAV_MAX_KM) throw new UserError(`sade_km: 0,5–${SAAV_MAX_KM} km.`);
+  const target = GRID_TARGETS[args.kohderyhma ?? "kaikki"];
+  if (!target) throw new UserError(`kohderyhma: ${Object.keys(GRID_TARGETS).join(", ")}.`);
+  const ind = args.toimiala ? resolveIndustry(args.toimiala) : null;
+  const c = await resolveCenter(args, budget);
+  const bbox = bboxAround(c.lat, c.lon, km);
+  const { tot, postal } = await summarize(bbox, (lon, lat) => haversineKm(c.lat, c.lon, lat, lon) <= km, budget);
+
+  const out = [`Saavutettavuusalue: ${fmtDec(km, 1)} km linnuntietä, ${c.label}.`, ""];
+  out.push(`Asukkaat alueella: ${fmt(tot.pop)} (${tot.cells} asuttua 1 km ruutua).`);
+  if (tot.pop) {
+    const known = tot.pop - tot.hiddenPop;
+    out.push(`- naiset ${fmt(tot.women)}, miehet ${fmt(tot.men)}; 0–14 v. ${fmt(tot.a0_14)}, 15–64 v. ${fmt(tot.a15_64)}, 65+ v. ${fmt(tot.a65)}`);
+    if (tot.hidden) out.push(`- jakaumat ${fmt(known)} asukkaasta: ${tot.hidden} ruudussa (${fmt(tot.hiddenPop)} as.) on alle 10 asukasta, jolloin sukupuoli ja ikä on salattu`);
+  }
+
+  const shown = postal.filter((p) => p.share === null || p.share >= 0.1 || p.inside >= 200);
+  if (shown.length) {
+    out.push("", "Postinumeroalueet (asukkaita alueella / koko postinumeroalue Paavossa):");
+    for (const p of shown.slice(0, 40)) out.push(`- ${p.code} ${p.name}: ${fmt(p.inside)} / ${fmt(p.pop)}${p.share !== null ? ` (${Math.round(p.share * 100)} %)` : ""}`);
+    if (shown.length > 40) out.push(`… ja ${shown.length - 40} muuta.`);
+  }
+
+  if (ind) {
+    const codes = postal.filter((p) => p.share !== null && p.share >= 0.5).map((p) => p.code);
+    if (!codes.length) out.push("", "Yhtään postinumeroaluetta ei ole pääosin alueella, joten yrityksiä ei laskettu.");
+    else {
+      const use = codes.slice(0, SAAV_MAX_CODES);
+      const byId = new Set();
+      let truncated = false;
+      const res = await mapLimit(use, 5, (code) => searchAll({ mainBusinessLine: ind.code, postCode: code }, { budget, maxPages: 2 }));
+      for (const r of res) {
+        truncated ||= r.truncated;
+        for (const co of r.companies) if (isActive(co) && co.businessId?.value) byId.add(co.businessId.value);
+      }
+      const n = byId.size;
+      const base = tot[target.key];
+      out.push(
+        "",
+        `Yritykset toimialalla ${ind.code}${ind.name ? ` ${ind.name}` : ""} postinumeroalueilla, joiden asukkaista vähintään puolet on alueella (${use.length}${codes.length > use.length ? `/${codes.length}` : ""} aluetta): ${n}${truncated ? "+" : ""}.`,
+        n ? `${target.label}: ${fmt(base)}, eli ${fmt(base / n)} per yritys.` : "Ei yrityksiä.",
+        YTJ_NOTE,
+      );
+    }
+  }
+
+  out.push(
+    "",
+    "Laskenta: väestöruudun keskipiste säteen sisällä. Ruutu kuuluu postinumeroalueeseen keskipisteensä mukaan, joten osuudet ovat likimääräisiä. Säde on linnuntietä, ei ajomatka.",
+    SAAV_SOURCE,
+  );
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -1375,6 +1487,7 @@ const HANDLERS = {
   hae_julkisia_palveluja: haeJulkisiaPalveluja,
   julkinen_palvelu: julkinenPalvelu,
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
+  saavutettavuusalue,
 };
 
 export async function callTool(name, args = {}, env = {}) {

@@ -24,6 +24,7 @@ Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokes
 | `hae_julkisia_palveluja` | Kunnan tai hyvinvointialueen julkiset palvelut Suomi.fi-palvelutietovarannosta nimen sanalla |
 | `julkinen_palvelu` | Palvelun kuvaus, kenelle ja miten haetaan, maksut, palveluseteli, lainsäädäntö ja asiointikanavat (puhelin, osoite, aukiolo) |
 | `kaupparekisteri_ilmoitukset` | PRH:n kaupparekisterin rekisteröidyt ilmoitukset: yrityksen ilmoitushistoria Y-tunnuksella, tai haku asian (uudet yritykset, konkurssi, selvitystila, saneeraus, poistouhka, hallitus ym.), postitoimipaikan, nimen, yritysmuodon, toimialan ja aikavälin mukaan |
+| `saavutettavuusalue` | Asukkaat (sukupuoli, ikäryhmät) säteen sisällä pisteestä 1 km väestöruuduista, postinumeroalueet osuuksineen, valinnaisesti toimialan yritykset ja asukasta per yritys |
 | `korot` | Korkolain viitekorko ja viivästyskorot (4 ja 4 a §) annettuna päivänä, EKP:n ohjauskorot, viitekorkojen historia vuodesta 2009 |
 
 ## Tärkeä rajoitus
@@ -46,6 +47,8 @@ YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, 
 - Välimuisti: YTJ 12 h, Paavon metatiedot 1 vrk, tilastokyselyt 7 vrk (Cloudflaren Cache API).
 
 - Kaupparekisterin ilmoitukset: `https://avoindata.prh.fi/opendata-registerednotices-api/v3` (PRH, CC BY 4.0; kuvaus `/schema?lang=fi`). Yritys `/{y-tunnus}`, haku `/?entryCode=&location=&name=&companyForm=&noticeRegistrationType=&noticeRegistrationDateStart=&noticeRegistrationDateEnd=&page=` (50 yritystä sivulla). Ilmoituksesta tulevat päivä, diaarinumero, tyyppi ja rekisteröityjen asioiden koodit, ei tekstiä. Koodien otsikot (koodisto EC, 243 koodia) ovat tiedostossa `src/krekCodes.js`. Koko maan haku pelkällä aikavälillä tai ilmoitustyypillä aikakatkaistaan (504), joten koko maan haku vaatii rekisterimerkinnän koodin. Uudet yritykset = merkintä PERUS perusilmoituksella (U). Toimialaa ei voi rajata rajapinnassa; se suodatetaan enintään 10 sivusta. Rajapinta toistaa saman ilmoituksen useana rivinä, joten rivit yhdistetään diaarinumeron mukaan. Välimuisti 6 h.
+
+- Saavutettavuusalue: Tilastokeskuksen WFS `geo.stat.fi/geoserver` (CC BY 4.0): väestöruutujen keskipisteet `vaestoruutu:vaki2025_1km_kp` (asukkaat, sukupuoli, ikäryhmät; alle 10 asukkaan ruuduissa jakaumat salattu) ja postinumeroalueet `postialue:pno_tilasto_2026` (rajat ja asukasluku). Haku rajataan bboxilla (`minLon,minLat,maxLon,maxLat,EPSG:4326`), ja säteen sisällä olo lasketaan haversine-etäisyydellä. Postinumeron keskipiste on asutuksen (väestöpainotettu) keskipiste. Välimuisti 30 vrk. Ajoaika-alueet lisätään, kun reitityspalvelu on valittu.
 
 ## Sotkanet: eräpäivitys D1:een
 
