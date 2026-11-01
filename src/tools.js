@@ -329,6 +329,18 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: "asiakastarkistus",
+    description:
+      "Kokoaa yrityksen julkiset taustatiedot yhteen ennen sopimusta: tila ja tilanne (YTJ), ikä, rekisterit (ennakkoperintä, ALV, työnantaja), kaupparekisterin konkurssi-, saneeraus-, selvitystila-, purkautumis- ja poistomerkinnät, viimeisin rekisteröity tilinpäätös, digitaalisen tilinpäätöksen avainluvut ja yhteisöverotiedot, sekä havainnot. Ei sisällä maksuhäiriöitä eikä luottoluokitusta.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        y_tunnus: { type: "string", description: "Y-tunnus, esim. 2474190-3." },
+        nimi: { type: "string", description: "Yrityksen nimi, jos Y-tunnus ei ole tiedossa." },
+      },
+    },
+  },
 ];
 
 const TITLES = {
@@ -352,6 +364,7 @@ const TITLES = {
   julkinen_palvelu: "Julkinen palvelu (Suomi.fi)",
   kaupparekisteri_ilmoitukset: "Kaupparekisterin ilmoitukset (PRH)",
   saavutettavuusalue: "Saavutettavuusalue (väestö säteellä)",
+  asiakastarkistus: "Asiakastarkistus (julkiset tiedot)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -1467,6 +1480,106 @@ async function saavutettavuusalue(args) {
   return clip(out.join("\n"));
 }
 
+// ---------- Asiakastarkistus (julkiset tiedot) ----------
+
+// Kaupparekisterin merkinnät, jotka kertovat maksukyvyn tai toiminnan jatkuvuuden muutoksesta.
+const RISK_CODES = ["KONALK", "KONRAU", "KONLOP", "SANALK", "SANLOP", "SELAS", "SELLOP", "LAKK", "POIUH", "POISTO"];
+
+function yearsSince(iso) {
+  const t = Date.parse(String(iso ?? "").slice(0, 10));
+  if (Number.isNaN(t)) return null;
+  return (Date.now() - t) / (365.25 * 86400_000);
+}
+
+async function asiakastarkistus(args, env) {
+  const budget = newBudget(12);
+  const { id } = await resolveCompany(args, budget);
+  const [ytj, krek, periods, vero] = await Promise.all([
+    searchCompanies({ businessId: id }, { budget, ttl: 6 * 3600 }).then((r) => r.companies[0] ?? null),
+    companyNotices(id, budget).catch(() => undefined),
+    financialPeriods(id, budget).catch(() => null),
+    env?.DB ? veroForCompany(env.DB, id).catch(() => null) : Promise.resolve(null),
+  ]);
+  if (!ytj && !krek) {
+    return `Y-tunnuksella ${id} ei löytynyt yritystä YTJ:n avoimesta datasta. Toiminimet (yksityiset elinkeinonharjoittajat) eivät ole avoimessa datassa; tarkista ne YTJ:n verkkopalvelusta: ${ytjWebUrl(id)}`;
+  }
+  const c = ytj ?? krek;
+  const out = [`Asiakastarkistus: ${currentName(c)} (${id})`, ""];
+  const notes = [];
+
+  // Perustiedot
+  const age = yearsSince(c.registrationDate);
+  const bl = businessLine(c);
+  out.push("PERUSTIEDOT (YTJ)");
+  out.push(`- Tila: ${statusText(c)}${situations(c).length ? `, ${situations(c).join(", ")}` : ""}`);
+  out.push(`- Yritysmuoto: ${companyForm(c) ?? "–"}; päätoimiala: ${bl ? `${bl.code} ${bl.name}` : "–"}`);
+  out.push(`- Rekisteröity: ${fmtDate(c.registrationDate)}${age !== null ? ` (${age < 1 ? `${Math.round(age * 12)} kk` : `${fmtDec(age, 1)} v`} sitten)` : ""}`);
+  const a = address(c);
+  if (a?.text) out.push(`- Osoite: ${a.text}`);
+  if (!isActive(c)) notes.push(`Yritys ei ole toimiva YTJ:n mukaan (${statusText(c)}).`);
+  if (situations(c).length) notes.push(`YTJ:ssä yrityksen tilanne: ${situations(c).join(", ")}.`);
+  if (age !== null && age < 1) notes.push("Yritys on alle vuoden vanha, joten tilinpäätös- ja verotietoja ei välttämättä vielä ole.");
+
+  if (ytj) {
+    const regs = registers(ytj);
+    // registers() palauttaa vain voimassa olevat merkinnät (päättymispäivä puuttuu tai on tulevaisuudessa).
+    const has = (re) => regs.some((r) => re.test(r.text));
+    out.push(`- Ennakkoperintärekisteri: ${has(/Ennakkoperintä/) ? "kyllä" : "ei"}; arvonlisäverovelvollinen: ${has(/Arvonlisävero/) ? "kyllä" : "ei"}; työnantajarekisteri: ${has(/Työnantaja/) ? "kyllä" : "ei"}`);
+  }
+
+  // Kaupparekisterin merkinnät
+  out.push("", "KAUPPAREKISTERIN MERKINNÄT (PRH)");
+  if (krek === undefined) out.push("- Ilmoitustietoja ei saatu.");
+  else if (!krek) out.push("- Ei kaupparekisterin ilmoituksia avoimessa datassa.");
+  else {
+    const list = uniqueNotices(krek).sort((x, y) => (x.registrationDate < y.registrationDate ? 1 : -1));
+    const risk = list.filter((n) => (n.entryCodes ?? []).some((e) => RISK_CODES.includes(e)));
+    if (risk.length) {
+      for (const n of risk.slice(0, 10)) out.push(`- ${noticeLine(n, 8)}`);
+      notes.push(`Kaupparekisterissä on ${risk.length} merkintää konkurssista, saneerauksesta, selvitystilasta, purkautumisesta tai poistosta (uusin ${fmtDate(risk[0].registrationDate)}).`);
+    } else out.push("- Ei konkurssi-, saneeraus-, selvitystila-, purkautumis- tai poistomerkintöjä.");
+    const ta = list.find((n) => n.typeOfRegistration === "TA" || (n.entryCodes ?? []).includes("TASE"));
+    out.push(`- Viimeisin tilinpäätös rekisteröity: ${ta ? fmtDate(ta.registrationDate) : "ei tilinpäätösilmoituksia"}`);
+    if (!ta && age !== null && age > 2) notes.push("Kaupparekisteriin ei ole rekisteröity tilinpäätöstä, vaikka yritys on yli 2 vuotta vanha.");
+    else if (ta && yearsSince(ta.registrationDate) > 2) notes.push(`Viimeisin rekisteröity tilinpäätös on yli 2 vuoden takaa (${fmtDate(ta.registrationDate)}).`);
+  }
+
+  // Talous
+  out.push("", "TALOUS");
+  let st = null;
+  if (periods?.length) st = await financialStatement(id, periods[0].date).catch(() => null);
+  if (st) {
+    const { pl, bs } = st.cur;
+    const flip = (bs.x481 ?? 0) < 0 ? -1 : 1;
+    const eq = bs.x376 !== undefined ? bs.x376 * flip : undefined;
+    const tot = bs.x481 !== undefined ? bs.x481 * flip : undefined;
+    const parts = [
+      pl.x673 !== undefined ? `liikevaihto ${eur(pl.x673)}` : "liikevaihtoa ei ilmoitettu",
+      pl.x740 !== undefined ? `tilikauden tulos ${eur(pl.x740)}` : null,
+      eq !== undefined ? `oma pääoma ${eur(eq)}${tot ? ` (${fmtDec((eq / tot) * 100, 1)} % vastattavista)` : ""}` : null,
+    ].filter(Boolean);
+    out.push(`- Digitaalinen tilinpäätös, tilikausi ${fmtDate(st.start)}–${fmtDate(st.end)}: ${parts.join(", ")}`);
+    if (eq !== undefined && eq < 0) notes.push(`Oma pääoma on negatiivinen (${eur(eq)}) tilikauden ${fmtDate(st.end)} tilinpäätöksessä.`);
+  } else out.push(`- Ei digitaalista tilinpäätöstä PRH:n avoimessa datassa${periods === null ? " (rajapinta ei vastannut)" : ""}. Tilinpäätöksen saa PRH:n Virre-palvelusta.`);
+  const vr = vero?.rows?.length ? vero.rows[vero.rows.length - 1] : null;
+  if (vr) out.push(`- Yhteisöverotus ${vr.vuosi}: verotettava tulo ${eur(vr.tulo)}, maksuunpannut verot ${eur(vr.verot)}${vr.jaannos ? `, jäännösvero ${eur(vr.jaannos)}` : ""}`);
+  else if (env?.DB) out.push("- Ei yhteisöverotuksen julkisia tietoja ladatuilta vuosilta.");
+
+  // Yhteenveto
+  out.push("", "HAVAINNOT");
+  if (notes.length) for (const n of notes) out.push(`- ${n}`);
+  else out.push("- Julkisista rekistereistä ei löytynyt huomioitavaa.");
+  out.push(
+    "",
+    "Tarkista lisäksi käsin:",
+    `- Verovelkarekisteri YTJ:n verkkopalvelussa (yli 10 000 euron verovelka tai laiminlyödyt veroilmoitukset): ${ytjWebUrl(id)}`,
+    "- Maksuhäiriöt ja luottoluokitus ovat vain luottotietoyhtiöiden maksullisissa palveluissa; tämä kooste ei sisällä niitä eikä ole luottotieto.",
+    "",
+    "Lähteet: PRH (YTJ, kaupparekisterin ilmoitukset, digitaaliset tilinpäätökset), Verohallinto (yhteisöjen tuloverotuksen julkiset tiedot).",
+  );
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -1488,6 +1601,7 @@ const HANDLERS = {
   julkinen_palvelu: julkinenPalvelu,
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
   saavutettavuusalue,
+  asiakastarkistus,
 };
 
 export async function callTool(name, args = {}, env = {}) {

@@ -22,7 +22,7 @@ function check(cond, label) {
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
 check(init.result?.serverInfo?.name === "aluetieto", "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 20 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (20, readOnlyHint)");
+check(list.result?.tools?.length === 21 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (21, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -52,6 +52,8 @@ const cases = [
   ["tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "*", Ikä: "*", Sukupuoli: "*" } }, (t) => t.includes("enintään 3000")],
   ["hae_julkisia_palveluja", { alue: "Kymenlaakson hyvinvointialue", hakusana: "kotihoito" }, (t) => t.includes("Kotihoito (") && t.includes("palvelutietovaranto")],
   ["julkinen_palvelu", { palvelu: "72d2a7e0-1deb-4970-aac3-e8ff915ffb57" }, (t) => t.includes("Kymenlaakson hyvinvointialue") && t.includes("Palveluseteli: käytössä") && t.includes("Asiointikanavat")],
+  ["asiakastarkistus", { y_tunnus: "0469852-2" }, (t) => t.includes("konkurssissa") && t.includes("HAVAINNOT") && t.includes("verovelkarekisteri".slice(1))],
+  ["asiakastarkistus", { y_tunnus: "0100379-9" }, (t) => t.includes("Digitaalinen tilinpäätös") && t.includes("Julkisista rekistereistä ei löytynyt huomioitavaa")],
   ["saavutettavuusalue", { keskipiste: "48100", sade_km: 5 }, (t) => t.includes("Kotkansaari") && /Asukkaat alueella: \d/.test(t) && t.includes("CC BY 4.0")],
   ["saavutettavuusalue", { keskipiste: "60.4635, 26.9403", sade_km: 3, toimiala: "96220" }, (t) => t.includes("Kauneudenhoitopalvelut") && t.includes("per yritys")],
   ["kaupparekisteri_ilmoitukset", { y_tunnus: "3578202-2" }, (t) => t.includes("Guild Lounge Oy") && t.includes("Perusilmoitus (dnro 2025/558640)") && t.includes("CC BY 4.0")],

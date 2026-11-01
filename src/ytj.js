@@ -92,8 +92,11 @@ export function statusText(c) {
   return kr ?? "tuntematon tila";
 }
 
+// Yrityksen tilanteen koodit (YTJ:n description-rajapinta, tarkistettu 1.11.2026).
+const SITUATIONS = { KONK: "konkurssissa", SELTILA: "selvitystilassa", SANE: "saneerauksessa" };
+
 export function situations(c) {
-  return (c.companySituations ?? []).map((s) => fi(s.descriptions) ?? s.type).filter(Boolean);
+  return (c.companySituations ?? []).filter(isCurrent).map((s) => fi(s.descriptions) ?? SITUATIONS[s.type] ?? s.type).filter(Boolean);
 }
 
 export function businessLine(c) {
