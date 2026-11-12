@@ -32,6 +32,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/http.js`: HTTP, välimuisti, alipyyntöbudjetti
 - `src/tol2025.js`: toimialaluokitus
 - `src/sotkanet.js`: Sotkanet-eräpäivitys (cron) ja D1-luku
+- `src/geokoodaus.js`: MML:n geokoodauspalvelu (Pelias v2, API-avain salaisuutena MML_API_KEY)
 - `src/kela.js`: Kelan etuustilastot (avoindata.fi:n CKAN DataStore, SQL-kyselyt) ja hyvinvointialueiden kunnat (Tilastokeskuksen luokitusavain)
 - `test/smoke.mjs`: savutesti
 
@@ -49,3 +50,4 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - 1.11.2026 v1.7: saavutettavuusalue (väestö säteellä, postinumeroalueiden osuudet, toimialan yritykset). Ajoaika-alueet odottavat reitityspalvelun valintaa (openrouteservice tai Mapbox, molemmat vaativat avaimen).
 - 1.11.2026 v1.8: asiakastarkistus (Soklon asiakkaan taustatarkistus julkisista tiedoista). Havainnot ovat tosiasioita, ei luottokelpoisuusarviota. Korjattu samalla: yrityksen tilanteen koodit näkyvät suomeksi (KONK = konkurssissa) myös yrityksen_tiedot-työkalussa.
 - 12.11.2026 v1.9: kela_etuudet (Kelan etuuksien saajat ja maksetut etuudet kunnittain, hyvinvointialueittain ja koko maa; kuukausi vuodesta 2018, vuosi vuodesta 2008, yhden etuuden sarja) ja kela_vammaistuet (vammaistuet ja eläkettä saavan hoitotuki tuen tason, iän, sukupuolen ja sairauspääryhmän mukaan vuodesta 2016). Avoindata.fi:n 403-esto (1.11.) oli poistunut: rajapinta vastasi 12.11. liittimen omalla tunnisteella 200 myös Cloudflaren reunalta. Pienissä luvuissa (alle 5 saajaa) osien summa ei aina täsmää yhteensä-lukuun (arvo 4 on aineistossa poikkeuksellisen yleinen), joten tulosteessa siitä on huomautus. Korjattu samalla: Tilastokeskus poisti Paavon uusin-kansion, mikä rikkoi alueen_vaesto- ja aluetarkistus-työkalut (400); taulukot haetaan nyt uusimmasta julkaisuvuoden kansiosta.
+- 12.11.2026 v1.10: osoitteen_sijainti (MML:n avoin geokoodauspalvelu, osoite tai paikannimi -> koordinaatit ja kunta) ja saavutettavuusalueen keskipisteeksi katuosoite tai paikannimi. Avain HTTP Basic -otsakkeessa (ei URL:ssa eikä välimuistiavaimessa), haut välimuistissa 30 päivää, koska MML:n ehdot sallivat maksuttoman tuotantokäytön vain pienellä volyymilla. Ilman avainta työkalut kertovat, ettei geokoodausta ole kytketty. Testit: MML_API_KEY=... node test/smoke.mjs.

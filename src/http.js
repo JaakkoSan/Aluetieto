@@ -1,7 +1,7 @@
 // HTTP-apu: välimuisti (Cloudflare Cache API), uudelleenyritykset ja
 // alipyyntöbudjetti (Workersin ilmaistasolla enintään 50 ulkoista pyyntöä / kutsu).
 
-const USER_AGENT = "aluetieto-mcp/1.0 (Claude-liitin; Cloudflare Worker)";
+const USER_AGENT = "aluetieto-mcp/1.10 (Claude-liitin; Cloudflare Worker)";
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 
@@ -36,7 +36,7 @@ async function sha256(text) {
  * Hakee JSONin. GET tai POST (body = objekti). 404 palauttaa null.
  * ttl sekunteina; 0 = ei välimuistia.
  */
-export async function fetchJson(url, { method = "GET", body, ttl = 3600, budget } = {}) {
+export async function fetchJson(url, { method = "GET", body, ttl = 3600, budget, headers = {} } = {}) {
   const cache = cacheApi();
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const keyUrl = payload ? `${url}${url.includes("?") ? "&" : "?"}_body=${await sha256(payload)}` : url;
@@ -60,6 +60,7 @@ export async function fetchJson(url, { method = "GET", body, ttl = 3600, budget 
           "User-Agent": USER_AGENT,
           Accept: "application/json",
           ...(payload ? { "Content-Type": "application/json" } : {}),
+          ...headers,
         },
         body: payload,
       });

@@ -1,6 +1,9 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus) vasten. Ajo: node test/smoke.mjs [-v]
 import worker from "../src/index.js";
 
+// MML_API_KEY ympäristömuuttujana testaa geokoodauksen oikeaa rajapintaa vasten.
+const ENV = process.env.MML_API_KEY ? { MML_API_KEY: process.env.MML_API_KEY } : {};
+const MML = !!ENV.MML_API_KEY;
 let id = 0;
 async function rpc(method, params) {
   const req = new Request("https://example.test/mcp", {
@@ -8,7 +11,7 @@ async function rpc(method, params) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
   });
-  return (await worker.fetch(req, {})).json();
+  return (await worker.fetch(req, ENV)).json();
 }
 async function tool(name, args) {
   const r = await rpc("tools/call", { name, arguments: args });
@@ -22,7 +25,7 @@ function check(cond, label) {
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
 check(init.result?.serverInfo?.name === "aluetieto", "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 23 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (23, readOnlyHint)");
+check(list.result?.tools?.length === 24 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (24, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -61,6 +64,15 @@ const cases = [
   ["kaupparekisteri_ilmoitukset", { asia: "uudet yritykset", paikkakunta: "Kotka", alkaen: "2026-10-01", asti: "2026-10-31" }, (t) => t.includes("Perusilmoitus") && t.includes("KOTKA")],
   ["kaupparekisteri_ilmoitukset", { ilmoitustyyppi: "perusilmoitus" }, (t) => t.includes("Koko maan haku vaatii asian")],
   ["korot", { paiva: "2024-03-15" }, (t) => t.includes("4,5 %") && t.includes("11,5 %")],
+  ...(MML
+    ? [
+        ["osoitteen_sijainti", { osoite: "Keskuskatu 10, Kotka" }, (t) => t.includes("Kotka") && /60\.4\d+, 26\.9\d+/.test(t) && t.includes("Maanmittauslaitos")],
+        ["saavutettavuusalue", { keskipiste: "Keskuskatu 10, Kotka", sade_km: 2 }, (t) => /Asukkaat alueella: \d/.test(t) && t.includes("Maanmittauslaitos")],
+      ]
+    : [
+        ["osoitteen_sijainti", { osoite: "Keskuskatu 10, Kotka" }, (t) => t.includes("Geokoodausta ei ole kytketty")],
+        ["saavutettavuusalue", { keskipiste: "Keskuskatu 10, Kotka" }, (t) => t.includes("Geokoodausta ei ole kytketty") && t.includes("koordinaatit")],
+      ]),
   ["kela_etuudet", { alue: "Kotka", kuukausi: "2025-12" }, (t) => t.includes("Kotka (kunta), 12/2025") && t.includes("Lapsilisä |") && t.includes("Lähde: Kela")],
   ["kela_etuudet", { alue: "Kymenlaakso", vuosi: 2024 }, (t) => t.includes("Kymenlaakson hyvinvointialue (6 kuntaa), vuosi 2024") && t.includes("Vuositasolla ei ole")],
   ["kela_etuudet", { alue: "Helsinki", etuus: "lapsilisä", alkaen: "2025-01", kuukausi: "2025-06" }, (t) => t.includes("Lapsilisä, Helsinki") && t.includes("1/2025 |") && t.includes("6/2025 |")],

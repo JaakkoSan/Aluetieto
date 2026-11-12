@@ -25,6 +25,7 @@ import { haversineKm, bboxAround, summarize, postalCenter, SAAV_SOURCE } from ".
 import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryText, ytjWebUrl, NOTICE_TYPES, PAGE_SIZE, KREK_SOURCE } from "./krek.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 import * as kela from "./kela.js";
+import { geocode, NoKeyError, MML_SOURCE } from "./geokoodaus.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -318,11 +319,11 @@ export const TOOLS = [
   {
     name: "saavutettavuusalue",
     description:
-      "Laskee, paljonko asukkaita on annetun säteen sisällä pisteestä (Tilastokeskuksen 1 km väestöruudut): asukkaat, naiset ja miehet, ikäryhmät 0–14, 15–64 ja 65+, sekä postinumeroalueet osuuksineen. Valinnaisesti toimialan yritysmäärä (YTJ) alueella ja asukasta per yritys. Keskipisteeksi koordinaatit, postinumero (asutuksen keskipiste) tai yrityksen Y-tunnus.",
+      "Laskee, paljonko asukkaita on annetun säteen sisällä pisteestä (Tilastokeskuksen 1 km väestöruudut): asukkaat, naiset ja miehet, ikäryhmät 0–14, 15–64 ja 65+, sekä postinumeroalueet osuuksineen. Valinnaisesti toimialan yritysmäärä (YTJ) alueella ja asukasta per yritys. Keskipisteeksi koordinaatit, katuosoite tai paikannimi (MML:n geokoodaus), postinumero (asutuksen keskipiste) tai yrityksen Y-tunnus.",
     inputSchema: {
       type: "object",
       properties: {
-        keskipiste: { type: "string", description: "Koordinaatit leveysaste ensin (\"60.4635, 26.9403\") tai postinumero (\"48100\")." },
+        keskipiste: { type: "string", description: "Koordinaatit leveysaste ensin (\"60.4635, 26.9403\"), katuosoite kuntineen (\"Keskuskatu 10, Kotka\"), paikannimi tai postinumero (\"48100\")." },
         y_tunnus: { type: "string", description: "Vaihtoehtoisesti yrityksen Y-tunnus: keskipisteenä yrityksen postinumeroalue. Valinnainen." },
         sade_km: { type: "number", description: "Säde kilometreinä linnuntietä (oletus 10, enintään 30)." },
         toimiala: { type: "string", description: "TOL 2025 -koodi tai nimen osa, esim. \"96220\". Valinnainen: laskee alueen yritykset." },
@@ -340,6 +341,18 @@ export const TOOLS = [
         y_tunnus: { type: "string", description: "Y-tunnus, esim. 2474190-3." },
         nimi: { type: "string", description: "Yrityksen nimi, jos Y-tunnus ei ole tiedossa." },
       },
+    },
+  },
+  {
+    name: "osoitteen_sijainti",
+    description:
+      "Muuttaa katuosoitteen tai paikannimen koordinaateiksi (WGS84) Maanmittauslaitoksen geokoodauspalvelulla: osumat, kunta ja osuman tyyppi (rakennuksen osoite, tieosoite tai paikannimi). Koordinaatit käyvät saavutettavuusalue-työkalun keskipisteeksi.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        osoite: { type: "string", description: "Katuosoite kuntineen (\"Keskuskatu 10, Kotka\") tai paikannimi (\"Kotkansaari\")." },
+      },
+      required: ["osoite"],
     },
   },
   {
@@ -394,6 +407,7 @@ const TITLES = {
   kaupparekisteri_ilmoitukset: "Kaupparekisterin ilmoitukset (PRH)",
   saavutettavuusalue: "Saavutettavuusalue (väestö säteellä)",
   asiakastarkistus: "Asiakastarkistus (julkiset tiedot)",
+  osoitteen_sijainti: "Osoitteen sijainti (MML)",
   kela_etuudet: "Kelan etuudet alueittain",
   kela_vammaistuet: "Kelan vammaistuet alueittain",
 };
@@ -1428,7 +1442,7 @@ const GRID_TARGETS = {
   "65+": { key: "a65", label: "65 vuotta täyttäneet" },
 };
 
-async function resolveCenter(args, budget) {
+async function resolveCenter(args, budget, env) {
   const raw = String(args.keskipiste ?? "").trim();
   const m = raw.match(/^(-?\d{1,2}(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.,]\d+)?)$/);
   if (m) {
@@ -1448,20 +1462,26 @@ async function resolveCenter(args, budget) {
     if (!code) throw new UserError(`Yrityksen ${id} osoitetta ei löytynyt YTJ:stä.`);
     who = `${currentName(c)}, `;
   }
-  if (!code) throw new UserError('Anna keskipiste: koordinaatit ("60.4635, 26.9403"), postinumero ("48100") tai y_tunnus.');
+  if (!code && raw) {
+    const hits = await geocodeOrExplain(raw, env, budget, 1);
+    if (!hits.length) throw new UserError(`Osoitetta tai paikannimeä "${raw}" ei löytynyt. Lisää kunta (esim. "Keskuskatu 10, Kotka") tai anna koordinaatit tai postinumero.`);
+    const h = hits[0];
+    return { lat: h.lat, lon: h.lon, label: `${h.label}${h.lahde ? ` (${h.lahde})` : ""}, ${h.lat.toFixed(5)}, ${h.lon.toFixed(5)}`, source: MML_SOURCE };
+  }
+  if (!code) throw new UserError('Anna keskipiste: koordinaatit ("60.4635, 26.9403"), osoite, postinumero ("48100") tai y_tunnus.');
   const c = await postalCenter(code, budget);
   if (!c) throw new UserError(`Postinumeroaluetta ${code} ei löytynyt Paavo-aineistosta.`);
   return { lat: c.lat, lon: c.lon, label: `${who}postinumeroalueen ${code} ${c.area.name} asutuksen keskipiste (${c.lat.toFixed(5)}, ${c.lon.toFixed(5)})` };
 }
 
-async function saavutettavuusalue(args) {
+async function saavutettavuusalue(args, env) {
   const budget = newBudget(30);
   const km = Number(String(args.sade_km ?? "10").replace(",", "."));
   if (!(km > 0) || km > SAAV_MAX_KM) throw new UserError(`sade_km: 0,5–${SAAV_MAX_KM} km.`);
   const target = GRID_TARGETS[args.kohderyhma ?? "kaikki"];
   if (!target) throw new UserError(`kohderyhma: ${Object.keys(GRID_TARGETS).join(", ")}.`);
   const ind = args.toimiala ? resolveIndustry(args.toimiala) : null;
-  const c = await resolveCenter(args, budget);
+  const c = await resolveCenter(args, budget, env);
   const bbox = bboxAround(c.lat, c.lon, km);
   const { tot, postal } = await summarize(bbox, (lon, lat) => haversineKm(c.lat, c.lon, lat, lon) <= km, budget);
 
@@ -1507,6 +1527,7 @@ async function saavutettavuusalue(args) {
     "",
     "Laskenta: väestöruudun keskipiste säteen sisällä. Ruutu kuuluu postinumeroalueeseen keskipisteensä mukaan, joten osuudet ovat likimääräisiä. Säde on linnuntietä, ei ajomatka.",
     SAAV_SOURCE,
+    ...(c.source ? [c.source] : []),
   );
   return clip(out.join("\n"));
 }
@@ -1609,6 +1630,31 @@ async function asiakastarkistus(args, env) {
     "Lähteet: PRH (YTJ, kaupparekisterin ilmoitukset, digitaaliset tilinpäätökset), Verohallinto (yhteisöjen tuloverotuksen julkiset tiedot).",
   );
   return clip(out.join("\n"));
+}
+
+// ---------- Geokoodaus (MML) ----------
+
+async function geocodeOrExplain(text, env, budget, size = 5) {
+  try {
+    return await geocode(text, env, { size, budget });
+  } catch (e) {
+    if (e instanceof NoKeyError) throw new UserError(`${e.message} Anna keskipisteeksi koordinaatit, postinumero tai Y-tunnus.`);
+    throw e;
+  }
+}
+
+async function osoitteenSijainti(args, env) {
+  const budget = newBudget(5);
+  const q = String(args.osoite ?? "").trim();
+  if (q.length < 2) throw new UserError("Anna osoite tai paikannimi.");
+  const hits = await geocodeOrExplain(q, env, budget, 5);
+  if (!hits.length) return `Osoitetta tai paikannimeä "${q}" ei löytynyt. Lisää kunta, esim. "Keskuskatu 10, Kotka".\n\n${MML_SOURCE}`;
+  const lines = [`Osoitteen sijainti: "${q}" (${hits.length} osumaa, paras ensin)`, ""];
+  for (const h of hits) {
+    lines.push(`- ${h.label}: ${h.lat.toFixed(5)}, ${h.lon.toFixed(5)}${h.kunta ? `, ${h.kunta}` : ""}${h.lahde ? ` (${h.lahde})` : ""}`);
+  }
+  lines.push("", "Koordinaatit WGS84, leveysaste ensin. Tieosoitteen kohta on arvioitu tienumeroinnin perusteella.", "", MML_SOURCE);
+  return lines.join("\n");
 }
 
 // ---------- Kela ----------
@@ -1776,6 +1822,7 @@ const HANDLERS = {
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
   saavutettavuusalue,
   asiakastarkistus,
+  osoitteen_sijainti: osoitteenSijainti,
   kela_etuudet: kelaEtuudet,
   kela_vammaistuet: kelaVammaistuet,
 };
