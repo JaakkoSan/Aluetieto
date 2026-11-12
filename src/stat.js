@@ -4,7 +4,8 @@
 import { fetchJson } from "./http.js";
 
 const PX = "https://pxdata.stat.fi/PxWeb/api/v1/fi";
-const PAAVO = `${PX}/Postinumeroalueittainen_avoin_tieto/uusin`;
+// Tilastokeskus poisti uusin-kansion marraskuussa 2026; aineistot ovat julkaisuvuoden kansioissa.
+const PAAVO = `${PX}/Postinumeroalueittainen_avoin_tieto`;
 const TOIMIPAIKAT = `${PX}/StatFin/alyr/13ww.px`;
 
 const DAY = 86400;
@@ -30,13 +31,24 @@ async function paavoTables(budget) {
   return memoized("paavo:tables", () => buildPaavoTables(budget), (t) => t.asukasrakenne && t.tulot);
 }
 
+/** Taulukkotunnukset ovat muotoa "<julkaisuvuosi>/<taulukko>.px" uusimmasta vuosikansiosta. */
 async function buildPaavoTables(budget) {
-  const list = await fetchJson(PAAVO, { ttl: DAY, budget });
-  const find = (prefix) => (list ?? []).find((t) => String(t.text).includes(prefix))?.id ?? null;
-  return {
-    asukasrakenne: find("1. Asukasrakenne"),
-    tulot: find("3. Asukkaiden käytettävissä olevat rahatulot"),
-  };
+  const folders = await fetchJson(PAAVO, { ttl: DAY, budget });
+  const years = (folders ?? [])
+    .map((f) => String(f.id))
+    .filter((id) => /^\d{4}$/.test(id))
+    .sort()
+    .reverse();
+  for (const year of years.slice(0, 2)) {
+    const list = await fetchJson(`${PAAVO}/${year}`, { ttl: DAY, budget });
+    const find = (prefix) => {
+      const id = (list ?? []).find((t) => t.type === "t" && String(t.text).includes(prefix))?.id;
+      return id ? `${year}/${id}` : null;
+    };
+    const t = { asukasrakenne: find("1. Asukasrakenne"), tulot: find("3. Asukkaiden käytettävissä olevat rahatulot") };
+    if (t.asukasrakenne && t.tulot) return t;
+  }
+  return { asukasrakenne: null, tulot: null };
 }
 
 async function tableMeta(id, budget) {

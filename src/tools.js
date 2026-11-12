@@ -24,6 +24,7 @@ import { resolvePtvArea, servicesInArea, service, channels, channelText, service
 import { haversineKm, bboxAround, summarize, postalCenter, SAAV_SOURCE } from "./saavutettavuus.js";
 import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryText, ytjWebUrl, NOTICE_TYPES, PAGE_SIZE, KREK_SOURCE } from "./krek.js";
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
+import * as kela from "./kela.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -341,6 +342,34 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: "kela_etuudet",
+    description:
+      "Kelan etuuksien saajat ja maksetut etuudet (euroa) kunnassa, hyvinvointialueella tai koko maassa: kaikki etuudet yhdeltä kuukaudelta (vuodesta 2018) tai vuodelta (vuodesta 2008), tai yhden etuuden kuukausisarja. Mukana keskimääräinen etuus saajaa kohden. Esim. lapsilisä, yleinen asumistuki, työttömyysturva, toimeentulotuki, sairauspäivärahat, eläkkeet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        alue: { type: "string", description: "Kunta (nimi tai numero), hyvinvointialue (esim. \"Kymenlaakso\") tai \"koko maa\". Oletus: koko maa." },
+        kuukausi: { type: "string", description: "Kuukausi VVVV-KK. Oletus: viimeisin julkaistu." },
+        vuosi: { type: "integer", description: "Vuositiedot (vuodesta 2008) kuukauden sijaan. Vuositasolla ei ole eläkkeiden, vammaisetuuksien, asumistukien eikä elatustuen saajia." },
+        etuus: { type: "string", description: "Yksi etuus nimellä tai nimen osalla: palauttaa kuukausisarjan (oletus 13 kuukautta)." },
+        alkaen: { type: "string", description: "Sarjan ensimmäinen kuukausi VVVV-KK (vain etuus-haussa)." },
+      },
+    },
+  },
+  {
+    name: "kela_vammaistuet",
+    description:
+      "Kelan vammaistukien saajat ja maksetut euroa kunnassa, hyvinvointialueella tai koko maassa kuukausittain vuodesta 2016: alle 16-vuotiaan ja 16 vuotta täyttäneen vammaistuki sekä eläkettä saavan hoitotuki tuen tason (perus, korotettu, ylin, suojattu), ikäryhmän ja sukupuolen mukaan, valinnaisesti sairauspääryhmittäin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        alue: { type: "string", description: "Kunta (nimi tai numero), hyvinvointialue tai \"koko maa\". Oletus: koko maa." },
+        kuukausi: { type: "string", description: "Kuukausi VVVV-KK (vuodesta 2016). Oletus: viimeisin julkaistu." },
+        sairausryhmat: { type: "boolean", description: "true = myös saajat sairauspääryhmittäin (ICD-10)." },
+      },
+    },
+  },
 ];
 
 const TITLES = {
@@ -365,6 +394,8 @@ const TITLES = {
   kaupparekisteri_ilmoitukset: "Kaupparekisterin ilmoitukset (PRH)",
   saavutettavuusalue: "Saavutettavuusalue (väestö säteellä)",
   asiakastarkistus: "Asiakastarkistus (julkiset tiedot)",
+  kela_etuudet: "Kelan etuudet alueittain",
+  kela_vammaistuet: "Kelan vammaistuet alueittain",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -1580,6 +1611,149 @@ async function asiakastarkistus(args, env) {
   return clip(out.join("\n"));
 }
 
+// ---------- Kela ----------
+
+const KELA_YEARLY_NOTE =
+  "Vuositasolla ei ole eläkkeiden, vammaisetuuksien, asumistukien eikä elatustuen saajia (vain maksetut eurot).";
+const KELA_NOTES = [
+  "Saajat lasketaan etuuksittain; samaa henkilöä ei voi laskea yhteen eri etuuksista.",
+  "Yleisen asumistuen saaja on ruokakunta ja perustoimeentulotuen saaja kotitalous.",
+  "Kunta on saajan kotikunta. Hyvinvointialue on sen kuntien summa (Tilastokeskuksen luokitusavain).",
+];
+
+async function kelaArea(input, budget) {
+  const area = await kela.resolveArea(input ?? "", budget);
+  if (!area) throw new UserError(`Aluetta "${input}" ei löytynyt Kelan aineistosta. Anna kunnan nimi tai numero, hyvinvointialue tai "koko maa".`);
+  if (area.ambiguous) throw new UserError(`Useita osumia, tarkenna: ${area.ambiguous.join(", ")}.`);
+  return area;
+}
+
+const areaKind = (a) => (a.kind === "maa" ? "" : a.kind === "kunta" ? " (kunta)" : ` (${a.nros.length} kuntaa)`);
+const avg = (eur, n) => (n > 0 ? fmtDec(eur / n, 0) : "–");
+
+async function kelaEtuudet(args) {
+  const budget = newBudget();
+  const area = await kelaArea(args.alue, budget);
+  const latest = await kela.latestMonth(budget);
+  const src = `${kela.KELA_SOURCE}, Kelan etuuksien saajat ja maksetut etuudet: ${kela.KELA_URL.etuudet}`;
+
+  if (args.etuus) {
+    const names = await kela.benefitNames(budget);
+    const q = String(args.etuus).trim().toLowerCase();
+    const exact = names.find((n) => n.toLowerCase() === q);
+    const hits = exact ? [exact] : names.filter((n) => n.toLowerCase().includes(q));
+    if (!hits.length) throw new UserError(`Etuutta "${args.etuus}" ei löytynyt. Etuudet: ${names.join(", ")}.`);
+    if (hits.length > 1) throw new UserError(`Useita etuuksia, tarkenna: ${hits.join(", ")}.`);
+    const to = args.kuukausi ? kela.parseYm(args.kuukausi) : latest;
+    if (!to) throw new UserError("Anna kuukausi muodossa VVVV-KK.");
+    const from = args.alkaen ? kela.parseYm(args.alkaen) : kela.addMonths(to, -12);
+    if (!from || from > to) throw new UserError("Anna alkaen muodossa VVVV-KK, ja sen on oltava ennen loppukuukautta.");
+    if (kela.addMonths(from, 120) < to) throw new UserError("Sarjassa voi olla enintään 120 kuukautta.");
+    const rows = await kela.benefitSeries(area, hits[0], from, to, budget);
+    if (!rows.length) throw new UserError(`Ei tietoja ajalta ${kela.ymLabel(from)}–${kela.ymLabel(to)}. Kuukausitiedot alkavat 1/2018, viimeisin ${kela.ymLabel(latest)}.`);
+    const lines = [
+      `Kela: ${hits[0]}, ${area.label}${areaKind(area)}, ${kela.ymLabel(rows[0].ym)}–${kela.ymLabel(rows.at(-1).ym)}`,
+      "",
+      "Kuukausi | Saajat | Maksettu € | € / saaja",
+      ...rows.map((r) => `${kela.ymLabel(r.ym)} | ${fmt(r.saajat)} | ${fmt(r.eur)} | ${avg(r.e_l, r.s_l)}`),
+      "",
+      ...KELA_NOTES.slice(1),
+      "Pienissä luvuissa (alle 5 saajaa) arvot eivät aina ole tarkkoja.",
+      "",
+      src,
+    ];
+    return clip(lines.join("\n"));
+  }
+
+  const yearly = args.vuosi !== undefined && args.vuosi !== null && args.vuosi !== "";
+  let ym;
+  if (yearly) {
+    const y = Number(args.vuosi);
+    if (!Number.isInteger(y) || y < 2008 || y > Math.floor(latest / 100)) throw new UserError(`Vuositiedot ovat vuosilta 2008–${Math.floor(latest / 100) - 1}.`);
+    ym = y * 100 + 12;
+  } else {
+    ym = args.kuukausi ? kela.parseYm(args.kuukausi) : latest;
+    if (!ym) throw new UserError("Anna kuukausi muodossa VVVV-KK.");
+    if (ym < 201801 || ym > latest) throw new UserError(`Kuukausitiedot ovat ajalta 1/2018–${kela.ymLabel(latest)}.`);
+  }
+  const rows = (await kela.benefitsFor(area, ym, { yearly, budget })).sort((a, b) => b.eur - a.eur);
+  if (!rows.length) {
+    throw new UserError(yearly ? `Vuoden ${Math.floor(ym / 100)} tietoja ei ole vielä julkaistu.` : `Kuukauden ${kela.ymLabel(ym)} tietoja ei löytynyt.`);
+  }
+  const total = rows.reduce((s, r) => s + r.eur, 0);
+  const lines = [
+    `Kelan etuudet: ${area.label}${areaKind(area)}, ${yearly ? `vuosi ${Math.floor(ym / 100)}` : kela.ymLabel(ym)}`,
+    "",
+    "Etuus | Saajat | Maksettu € | € / saaja",
+    ...rows.map((r) => `${r.etuus} | ${r.saajat ? fmt(r.saajat) : "–"} | ${fmt(r.eur)} | ${avg(r.e_l, r.s_l)}`),
+    `Maksettu yhteensä | | ${fmt(total)} |`,
+    "",
+    ...(yearly ? [KELA_YEARLY_NOTE] : []),
+    ...KELA_NOTES,
+    "Negatiivinen summa tarkoittaa, että palautuksia oli enemmän kuin maksuja.",
+    "Sairaanhoitokorvauksista puuttuvat työterveyshuolto ja opiskelijoiden terveydenhuolto.",
+    `Kuukausitiedot päivittyvät kuukausittain 20. päivään mennessä; viimeisin ${kela.ymLabel(latest)}.`,
+    "",
+    src,
+  ];
+  return clip(lines.join("\n"));
+}
+
+async function kelaVammaistuet(args) {
+  const budget = newBudget();
+  const area = await kelaArea(args.alue, budget);
+  const res = await kela.vammaistukiResources(budget);
+  const years = Object.keys(res).map(Number).sort((a, b) => a - b);
+  if (!years.length) throw new HttpError("Kelan vammaistukiaineistoa ei löytynyt", 0);
+  let ym;
+  if (args.kuukausi) {
+    ym = kela.parseYm(args.kuukausi);
+    if (!ym) throw new UserError("Anna kuukausi muodossa VVVV-KK.");
+  } else {
+    ym = await kela.vtLatest(res[years.at(-1)].id, budget);
+  }
+  const r = res[Math.floor(ym / 100)];
+  if (!r) throw new UserError(`Vammaistukitiedot ovat vuosilta ${years[0]}–${years.at(-1)}.`);
+  const d = await kela.disabilityFor(r.id, area, ym, { byDiagnosis: !!args.sairausryhmat, budget });
+  if (!d.tasot.length) throw new UserError(`Kuukauden ${kela.ymLabel(ym)} tietoja ei löytynyt.`);
+
+  const ETUUDET = ["Alle 16-vuotiaan vammaistuki", "16 vuotta täyttäneen vammaistuki", "Eläkettä saavan hoitotuki", "Yhteensä"];
+  const TASOT = ["Perustuki", "Korotettu tuki", "Ylin tuki", "Suojattu tuki", "Yhteensä"];
+  const get = (rows, key, et, val) => rows.find((x) => x.etuus === et && x[key] === val);
+  const cell = (x) => (x ? `${fmt(x.saajat)} (${fmt(x.eur)} €)` : "–");
+
+  const lines = [
+    `Kelan vammaistuet: ${area.label}${areaKind(area)}, ${kela.ymLabel(ym)}`,
+    "Solussa saajat ja suluissa kuukauden aikana maksetut eurot.",
+    "",
+    `Tuen taso | ${ETUUDET.join(" | ")}`,
+    ...TASOT.map((t) => `${t} | ${ETUUDET.map((e) => cell(get(d.tasot, "etuustaso", e, t))).join(" | ")}`),
+    "",
+    `Sukupuoli | ${ETUUDET.join(" | ")}`,
+    ...["Nainen", "Mies", "Tuntematon"]
+      .filter((g) => d.sukupuolet.some((x) => x.sukupuoli === g))
+      .map((g) => `${g} | ${ETUUDET.map((e) => cell(get(d.sukupuolet, "sukupuoli", e, g))).join(" | ")}`),
+    "",
+    `Ikäryhmä | ${ETUUDET.map((e) => e.replace(" vammaistuki", "")).join(" | ")} (saajat)`,
+  ];
+  const ages = [...new Set(d.iat.map((x) => x.ikaryhma))].sort((a, b) => (Number.isNaN(parseInt(a)) ? 999 : parseInt(a)) - (Number.isNaN(parseInt(b)) ? 999 : parseInt(b)));
+  for (const a of ages) lines.push(`${a} | ${ETUUDET.map((e) => fmt(get(d.iat, "ikaryhma", e, a)?.saajat ?? 0)).join(" | ")}`);
+  if (args.sairausryhmat) {
+    lines.push("", "Sairauspääryhmä (kaikki vammaistuet) | Saajat | Maksettu €");
+    const diag = d.diag.filter((x) => x.etuus === "Yhteensä").sort((a, b) => b.saajat - a.saajat);
+    for (const x of diag) lines.push(`${x.sairauspaaryhma} | ${fmt(x.saajat)} | ${fmt(x.eur)}`);
+  }
+  lines.push(
+    "",
+    "Pienissä luvuissa (alle 5 saajaa) osien summa ei aina täsmää yhteensä-lukuun; käytä yhteensä-rivejä ja -sarakkeita kokonaismääränä.",
+    "Saaja on henkilö, jolle on maksettu kuukaudelle kohdistuvaa tukea; maksetuissa euroissa ovat myös takautuvat maksut ja palautukset.",
+    "Kunta on saajan kotikunta. Hyvinvointialue on sen kuntien summa (Tilastokeskuksen luokitusavain).",
+    "",
+    `${kela.KELA_SOURCE}, vammaistukien saajat ja maksetut etuudet: ${kela.KELA_URL.vammaistuet}`,
+  );
+  return clip(lines.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -1602,6 +1776,8 @@ const HANDLERS = {
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
   saavutettavuusalue,
   asiakastarkistus,
+  kela_etuudet: kelaEtuudet,
+  kela_vammaistuet: kelaVammaistuet,
 };
 
 export async function callTool(name, args = {}, env = {}) {

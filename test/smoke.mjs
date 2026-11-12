@@ -22,7 +22,7 @@ function check(cond, label) {
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
 check(init.result?.serverInfo?.name === "aluetieto", "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 21 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (21, readOnlyHint)");
+check(list.result?.tools?.length === 23 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (23, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -61,6 +61,12 @@ const cases = [
   ["kaupparekisteri_ilmoitukset", { asia: "uudet yritykset", paikkakunta: "Kotka", alkaen: "2026-10-01", asti: "2026-10-31" }, (t) => t.includes("Perusilmoitus") && t.includes("KOTKA")],
   ["kaupparekisteri_ilmoitukset", { ilmoitustyyppi: "perusilmoitus" }, (t) => t.includes("Koko maan haku vaatii asian")],
   ["korot", { paiva: "2024-03-15" }, (t) => t.includes("4,5 %") && t.includes("11,5 %")],
+  ["kela_etuudet", { alue: "Kotka", kuukausi: "2025-12" }, (t) => t.includes("Kotka (kunta), 12/2025") && t.includes("Lapsilisä |") && t.includes("Lähde: Kela")],
+  ["kela_etuudet", { alue: "Kymenlaakso", vuosi: 2024 }, (t) => t.includes("Kymenlaakson hyvinvointialue (6 kuntaa), vuosi 2024") && t.includes("Vuositasolla ei ole")],
+  ["kela_etuudet", { alue: "Helsinki", etuus: "lapsilisä", alkaen: "2025-01", kuukausi: "2025-06" }, (t) => t.includes("Lapsilisä, Helsinki") && t.includes("1/2025 |") && t.includes("6/2025 |")],
+  ["kela_etuudet", { etuus: "tuki" }, (t) => t.includes("Useita etuuksia")],
+  ["kela_vammaistuet", { alue: "Pyhtää", kuukausi: "2025-06" }, (t) => t.includes("Pyhtää (kunta), 6/2025") && t.includes("Eläkettä saavan hoitotuki") && t.includes("Ikäryhmä") && t.includes("Pienissä luvuissa")],
+  ["kela_vammaistuet", { alue: "koko maa", kuukausi: "2019-06", sairausryhmat: true }, (t) => t.includes("Koko maa, 6/2019") && t.includes("F00-F99")],
 ];
 for (const [name, args, pred] of cases) {
   const t0 = Date.now();
