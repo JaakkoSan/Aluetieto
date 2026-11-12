@@ -346,7 +346,7 @@ export const TOOLS = [
   {
     name: "osoitteen_sijainti",
     description:
-      "Muuttaa katuosoitteen tai paikannimen koordinaateiksi (WGS84) Maanmittauslaitoksen geokoodauspalvelulla: osumat, kunta ja osuman tyyppi (rakennuksen osoite, tieosoite tai paikannimi). Koordinaatit käyvät saavutettavuusalue-työkalun keskipisteeksi.",
+      "Muuttaa katuosoitteen tai paikannimen koordinaateiksi (WGS84) Maanmittauslaitoksen geokoodauspalvelulla: osumat, postinumero (osoitteille), kunta ja osuman tyyppi (rakennuksen osoite, tieosoite tai paikannimi). Koordinaatit käyvät saavutettavuusalue-työkalun keskipisteeksi.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1651,7 +1651,7 @@ async function osoitteenSijainti(args, env) {
   if (!hits.length) return `Osoitetta tai paikannimeä "${q}" ei löytynyt. Lisää kunta, esim. "Keskuskatu 10, Kotka".\n\n${MML_SOURCE}`;
   const lines = [`Osoitteen sijainti: "${q}" (${hits.length} osumaa, paras ensin)`, ""];
   for (const h of hits) {
-    lines.push(`- ${h.label}: ${h.lat.toFixed(5)}, ${h.lon.toFixed(5)}${h.kunta ? `, ${h.kunta}` : ""}${h.lahde ? ` (${h.lahde})` : ""}`);
+    lines.push(`- ${h.label}: ${h.lat.toFixed(5)}, ${h.lon.toFixed(5)}${h.postinumero ? `, postinumero ${h.postinumero}` : ""}${h.kunta ? `, ${h.kunta}` : ""}${h.lahde ? ` (${h.lahde})` : ""}`);
   }
   lines.push("", "Koordinaatit WGS84, leveysaste ensin. Tieosoitteen kohta on arvioitu tienumeroinnin perusteella.", "", MML_SOURCE);
   return lines.join("\n");

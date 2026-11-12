@@ -66,7 +66,7 @@ const cases = [
   ["korot", { paiva: "2024-03-15" }, (t) => t.includes("4,5 %") && t.includes("11,5 %")],
   ...(MML
     ? [
-        ["osoitteen_sijainti", { osoite: "Keskuskatu 10, Kotka" }, (t) => t.includes("Kotka") && /60\.4\d+, 26\.9\d+/.test(t) && t.includes("Maanmittauslaitos")],
+        ["osoitteen_sijainti", { osoite: "Keskuskatu 10, Kotka" }, (t) => t.includes("Keskuskatu 10 (Kotka)") && /60\.4\d+, 26\.9\d+/.test(t) && t.includes("postinumero 48100") && t.includes("Maanmittauslaitos")],
         ["saavutettavuusalue", { keskipiste: "Keskuskatu 10, Kotka", sade_km: 2 }, (t) => /Asukkaat alueella: \d/.test(t) && t.includes("Maanmittauslaitos")],
       ]
     : [
