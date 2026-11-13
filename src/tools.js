@@ -27,6 +27,7 @@ import { listIndicators, findIndicator, findRegions, countryRegion, values as so
 import * as kela from "./kela.js";
 import { geocode, NoKeyError, MML_SOURCE } from "./geokoodaus.js";
 import * as ep from "./eperusteet.js";
+import * as tyonv from "./tyonv.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -430,6 +431,25 @@ export const TOOLS = [
       required: ["peruste"],
     },
   },
+  {
+    name: "avoimet_tyopaikat",
+    description:
+      "Avoimet työpaikat ammatin ja maakunnan mukaan KEHA-keskuksen työnvälitystilastosta (Tilastokeskus, StatFin): kuukausittainen sarja, uusin kuukausi ja muutos vuodentakaisesta samasta kuukaudesta, maakuntien järjestys, työnantajan sektori (yritys, kotitalous, julkinen) puolivuosittain ja valinnaisesti työnhakijat samasta ammattiryhmästä. Kattaa vain TE-palveluihin (Työmarkkinatorille) ilmoitetut paikat; ei yritysten nimiä.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ammatti: {
+          type: "array",
+          items: { type: "string" },
+          description: "1–3 ammattia nimellä tai AML 2010 -koodilla (4 numeroa), esim. [\"kosmetologi\"], [\"parturi-kampaaja\", \"hieroja\"], [\"5141\"]. Tuntematon nimi haetaan tilaston ammattiryhmistä tekstinä.",
+        },
+        alue: { type: "string", description: "Maakunta (nimi tai koodi, esim. \"Uusimaa\", \"MK06\"), kunta (ohjataan maakuntaan, lisäksi kunnan kaikki avoimet paikat) tai \"koko maa\". Oletus: koko maa." },
+        kuukausia: { type: "integer", description: "Aikasarjan pituus kuukausina, 1–36. Oletus 12." },
+        vertailu: { type: "boolean", description: "true = mukaan työnhakijat (kaikki ja työttömät) samasta ammattiryhmästä ja alueelta sekä työnhakijoita avointa paikkaa kohden." },
+      },
+      required: ["ammatti"],
+    },
+  },
 ];
 
 const TITLES = {
@@ -460,6 +480,7 @@ const TITLES = {
   hae_tutkintoja: "Hae tutkintoja (ePerusteet)",
   tutkinnon_peruste: "Tutkinnon peruste (ePerusteet)",
   tutkinnon_osaaminen: "Tutkinnon osan osaamisvaatimukset (ePerusteet)",
+  avoimet_tyopaikat: "Avoimet työpaikat ammateittain (työnvälitystilasto)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -2224,6 +2245,181 @@ async function tutkinnonOsaaminen(args) {
   return clip(lines.join("\n"));
 }
 
+// ---------- Avoimet työpaikat (KEHA-keskuksen työnvälitystilasto, StatFin) ----------
+
+const TP_MAX_OCC = 3;
+const TP_SECTOR_FI = { "03": "Muu yksityinen työnantaja kuin yritys (esim. järjestö)", "05": "Yksityishenkilö tai kotitalous", "06": "Kuntayhtymä tai kuntainliitto" };
+/** Lisää pisteen lauseen loppuun, ellei teksti jo pääty pisteeseen (esim. "Kosmetologit ym."). */
+const tpDot = (t) => (t.endsWith(".") ? t : `${t}.`);
+
+const tpCell = (c) => tyonv.cellText(c, fmt);
+
+function tpChange(cur, prev) {
+  if (cur?.value == null || prev?.value == null) return null;
+  const d = cur.value - prev.value;
+  const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
+  const pctTxt = prev.value > 0 ? `, ${sign}${fmtDec(Math.abs(d / prev.value) * 100, 1)} %` : "";
+  return `${sign}${fmt(Math.abs(d))}${pctTxt}`;
+}
+
+async function avoimetTyopaikat(args) {
+  const raw = Array.isArray(args.ammatti) ? args.ammatti : args.ammatti != null ? [args.ammatti] : [];
+  const inputs = raw.map((x) => String(x).trim()).filter(Boolean);
+  if (!inputs.length) throw new UserError('Anna ammatti, esim. ["kosmetologi"] tai ["5141"].');
+  if (inputs.length > TP_MAX_OCC) throw new UserError(`Anna enintään ${TP_MAX_OCC} ammattia kerralla.`);
+  const months = Math.min(36, Math.max(1, Math.round(Number(args.kuukausia) || 12)));
+  const seekers = !!args.vertailu;
+  const budget = newBudget(12);
+
+  const meta = await tyonv.tableMetaFor("ammatit", budget);
+  if (!meta) throw new HttpError("Työnvälitystilaston taulukkoa tyonv/12tu ei saatu", 0);
+  const occVar = meta.variables.find((v) => v.code === "Ammattiryhmä");
+  const areaVar = meta.variables.find((v) => v.code === "Alue");
+  if (!occVar || !areaVar) throw new HttpError("Työnvälitystilaston taulukon rakenne on muuttunut", 0);
+
+  const occs = [];
+  for (const q of inputs) {
+    const o = tyonv.resolveOccupation(q, occVar);
+    if (o.many) {
+      throw new UserError(
+        `Ammatti "${q}" vastaa useaa ammattiryhmää. Valitse koodi:\n${o.many.map((x) => `- ${x.code} ${x.name}`).join("\n")}`,
+      );
+    }
+    if (o.error) {
+      throw new UserError(
+        `${o.error} Anna ammattiryhmän nimi tai AML 2010 -koodi (4 numeroa). Ammattiryhmät näkyvät työkalulla tilaston_rakenne (taulukko "tyonv/12tu", muuttuja "Ammattiryhmä", hakusana).`,
+      );
+    }
+    if (!occs.some((x) => x.code === o.code)) occs.push(o);
+  }
+
+  const region = await tyonv.resolveRegion(args.alue, areaVar, budget);
+  if (region.error) throw new UserError(region.error);
+  const regionCodes = ["SSS", ...areaVar.values.filter((c) => /^MK\d\d$/.test(c) && c !== "MK90")];
+  const groups = [...new Set(occs.map((o) => o.code.slice(0, 2)))];
+
+  const [series, sectors, kunta] = await Promise.all([
+    tyonv.occupationSeries({ occCodes: occs.map((o) => o.code), regionCodes, months: Math.max(months, 13), seekers }, budget),
+    tyonv.sectorHalfYear({ groups, regionCode: region.code }, budget).catch((e) => ({ error: e })),
+    region.kunta ? tyonv.municipalityVacancies(region.kunta.code, budget).catch((e) => ({ error: e })) : null,
+  ]);
+
+  const allMonths = series.codes("timeperiod_m");
+  const latest = allMonths.at(-1);
+  const shown = allMonths.slice(-months);
+  const prevYear = tyonv.yearEarlier(latest);
+  const at = (occ, area, month, content = "AVPAIKATYHT", asema = "SSS") =>
+    series.get({ Alue: area, Ammattiryhmä: occ, "Työmarkkina-asema": asema, timeperiod_m: month, contentscode: content });
+
+  const out = [
+    `Avoimet työpaikat: ${tpDot(occs.map((o) => `${o.code} ${o.name}`).join("; "))} Alue: ${region.name}${region.kunta ? ` (kunta ${region.kunta.name} ohjattu maakuntaan, koska ammattijako on vain maakunnittain)` : ""}.`,
+    `Tilastokuukausi: ${tyonv.monthLabel(latest)} (uusin julkaistu${series.updated ? `, päivitetty ${fmtDate(series.updated)}` : ""}).`,
+    "Luku = TE-palveluihin (Työmarkkinatorille) ilmoitetut avoimet työpaikat, jotka olivat avoinna kuukauden aikana.",
+  ];
+  const howNotes = occs.filter((o) => o.how && o.how !== "koodi").map((o) => `${o.how} → ${o.code} ${o.name}`);
+  if (howNotes.length) out.push(`Ammattiluokitus (AML 2010): ${tpDot(howNotes.join("; "))}`);
+
+  for (const o of occs) {
+    out.push("", `${o.code} ${o.name.toUpperCase()}, ${region.name}`);
+    const cur = at(o.code, region.code, latest);
+    const prev = prevYear ? at(o.code, region.code, prevYear) : null;
+    out.push(`Uusin kuukausi ${tyonv.monthLabel(latest)}: ${tpCell(cur)} avointa työpaikkaa.`);
+    if (prev) {
+      const ch = tpChange(cur, prev);
+      out.push(`Vuotta aiemmin ${tyonv.monthLabel(prevYear)}: ${tpCell(prev)}${ch ? ` (muutos ${ch})` : ""}. Vertailu samaan kuukauteen poistaa kausivaihtelun.`);
+    }
+    if (seekers) {
+      const all = at(o.code, region.code, latest, "HAKIJAYHT", "SSS");
+      const unemp = at(o.code, region.code, latest, "HAKIJAYHT", "2");
+      out.push(`Työnhakijoita ${tyonv.monthLabel(latest)} kuukauden aikana: ${tpCell(all)}, joista työttömiä ${tpCell(unemp)}.`);
+      if (cur.value > 0 && all.value != null) {
+        out.push(`Avoimia työpaikkoja ${fmtDec(cur.value / all.value, 2)} työnhakijaa kohden (${fmtDec(all.value / cur.value, 1)} työnhakijaa avointa paikkaa kohden).`);
+      }
+    }
+    const vals = shown.map((m) => at(o.code, region.code, m));
+    const known = vals.filter((c) => c.value != null);
+    out.push(`Kuukausittain (${shown.length} kk)${seekers ? ": avoimia | työnhakijoita | työttömiä" : ""}:`);
+    for (const m of shown) {
+      const line = seekers
+        ? `${tpCell(at(o.code, region.code, m))} | ${tpCell(at(o.code, region.code, m, "HAKIJAYHT"))} | ${tpCell(at(o.code, region.code, m, "HAKIJAYHT", "2"))}`
+        : tpCell(at(o.code, region.code, m));
+      out.push(`  ${tyonv.monthLabel(m)}: ${line}`);
+    }
+    if (known.length > 1) {
+      const hidden = vals.length - known.length;
+      out.push(
+        `Keskiarvo ${known.length} kk: ${fmtDec(known.reduce((a, c) => a + c.value, 0) / known.length, 1)} avointa työpaikkaa kuukaudessa${hidden ? ` (${hidden} kk ilman lukua ei ole mukana, joten keskiarvo voi olla liian suuri)` : ""}.`,
+      );
+    }
+    if (tyonv.CODE_NOTES[o.code]) out.push(`Huom: ${tyonv.CODE_NOTES[o.code]}`);
+
+    // Maakuntien järjestys uusimpana kuukautena.
+    const ranks = regionCodes
+      .filter((c) => c !== "SSS")
+      .map((c) => ({ c, name: series.label("Alue", c).replace(/^MK\d+\s*/, ""), cell: at(o.code, c, latest) }));
+    const withVal = ranks.filter((r) => r.cell.value > 0).sort((a, b) => b.cell.value - a.cell.value);
+    const zero = ranks.filter((r) => r.cell.value === 0);
+    const without = ranks.filter((r) => r.cell.value == null);
+    out.push(`Maakunnat ${tyonv.monthLabel(latest)} (koko maa ${tpCell(at(o.code, "SSS", latest))}):`);
+    withVal.forEach((r, i) => out.push(`  ${i + 1}. ${r.name}: ${tpCell(r.cell)}${r.c === region.code ? " (valittu alue)" : ""}`));
+    if (zero.length) out.push(`  0 avointa: ${zero.map((r) => r.name).join(", ")}`);
+    if (without.length) out.push(`  Salassa (...) tai ei tietoa: ${without.map((r) => `${r.name}${tpCell(r.cell) === "ei tietoa" ? " (ei tietoa)" : ""}`).join(", ")}`);
+  }
+
+  // Työnantajan sektori (12uz): vain kahden numeron ammattiluokat.
+  out.push("");
+  if (sectors?.error) {
+    out.push(`Työnantajan sektori: tietoa ei saatu (${sectors.error.message}).`);
+  } else {
+    const year = sectors.codes("timeperiod_y").at(-1);
+    out.push(`TYÖNANTAJAN SEKTORI, tammi-kesäkuu ${year}, ${region.name} (taulukko tyonv/12uz; sektoritieto on vain kahden numeron ammattiluokille, ei yksittäiselle ammattiryhmälle):`);
+    for (const g of groups) {
+      const get = (s) => sectors.get({ Alue: region.code, Ammattiryhmä: g, "Työnantajan sektori": s, "Työpaikan työn kesto": "SSS", contentscode: "AVPAIKATYHTPV" });
+      const total = get("SSS");
+      out.push(`${sectors.label("Ammattiryhmä", g)}: yhteensä ${tpCell(total)} avointa työpaikkaa tammi-kesäkuun aikana`);
+      const parts = sectors
+        .codes("Työnantajan sektori")
+        .filter((s) => s !== "SSS")
+        .map((s) => ({ s, cell: get(s) }))
+        .filter((p) => p.cell.value !== 0)
+        .sort((a, b) => (b.cell.value ?? -1) - (a.cell.value ?? -1));
+      for (const p of parts) {
+        const share = p.cell.value != null && total.value > 0 ? ` (${fmtDec((p.cell.value / total.value) * 100, 1)} %)` : "";
+        out.push(`  ${TP_SECTOR_FI[p.s] ?? sectors.label("Työnantajan sektori", p.s)}: ${tpCell(p.cell)}${share}`);
+      }
+    }
+  }
+
+  // Kunnan kaikki avoimet työpaikat (12r5), ei ammattijakoa.
+  if (region.kunta) {
+    out.push("");
+    if (!kunta || kunta.error) {
+      out.push(`Kunnan ${region.kunta.name} avoimia työpaikkoja ei saatu${kunta?.error ? ` (${kunta.error.message})` : ""}.`);
+    } else {
+      const km = kunta.codes("timeperiod_m");
+      const kl = km.at(-1);
+      const kp = tyonv.yearEarlier(kl);
+      const g = (m, c) => kunta.get({ Alue: region.kunta.code, timeperiod_m: m, contentscode: c });
+      out.push(`KUNTA ${region.kunta.name.toUpperCase()}, kaikki ammatit (taulukko tyonv/12r5; kunnittain ei ole ammattijakoa):`);
+      for (const [c, label] of [["AVPAIKATLOPUSSA", "Avoimia työpaikkoja kuukauden laskentapäivänä"], ["UUDETAVP", "Uusia avoimia työpaikkoja kuukauden aikana"]]) {
+        const ch = km.includes(kp) ? tpChange(g(kl, c), g(kp, c)) : null;
+        out.push(`  ${label} ${tyonv.monthLabel(kl)}: ${tpCell(g(kl, c))}${km.includes(kp) ? `; vuotta aiemmin ${tpCell(g(kp, c))}${ch ? ` (muutos ${ch})` : ""}` : ""}`);
+      }
+    }
+  }
+
+  out.push(
+    "",
+    "Huomautukset:",
+    "- Tilasto kattaa vain TE-palveluihin (Työmarkkinatorille) ilmoitetut paikat. Kaikkia paikkoja ei ilmoiteta sinne (esim. vuokratuolipaikat ja somerekrytointi), joten luku kuvaa suuntaa, ei koko kysyntää.",
+    "- Avoimet työpaikat kuukauden aikana: sama paikka näkyy jokaisena kuukautena, jona se on avoinna, joten kuukausilukuja ei voi laskea yhteen.",
+    '- "salassa (...)" = tilastossa salassapitosäännön alainen pieni luku; se ei tarkoita nollaa. "ei tietoa" = arvo puuttuu.',
+    "- Tilastossa ei ole yritysten nimiä.",
+    `${tyonv.TYONV_SOURCE}. Taulukot tyonv/12tu${sectors?.error ? "" : ", tyonv/12uz"}${region.kunta ? ", tyonv/12r5" : ""}.`,
+  );
+  return clip(out.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -2252,6 +2448,7 @@ const HANDLERS = {
   hae_tutkintoja: haeTutkintoja,
   tutkinnon_peruste: tutkinnonPeruste,
   tutkinnon_osaaminen: tutkinnonOsaaminen,
+  avoimet_tyopaikat: avoimetTyopaikat,
 };
 
 export async function callTool(name, args = {}, env = {}) {

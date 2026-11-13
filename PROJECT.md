@@ -34,6 +34,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/sotkanet.js`: Sotkanet-eräpäivitys (cron) ja D1-luku
 - `src/geokoodaus.js`: MML:n geokoodauspalvelu (Pelias v2, API-avain salaisuutena MML_API_KEY)
 - `src/eperusteet.js`: Opetushallituksen ePerusteet (ammatillisten tutkintojen haku, perusteen ratkaisu, rakennepuu, tutkinnon osan kaksi sisältömuotoa, HTML tekstiksi, voimassaolo Suomen ajassa)
+- `src/tyonv.js`: KEHA-keskuksen työnvälitystilasto StatFinissä (ammattinimien muunnos AML 2010 -koodeiksi, maakunnan ja kunnan ratkaisu, kyselyt 12tu, 12uz ja 12r5)
 - `src/kela.js`: Kelan etuustilastot (avoindata.fi:n CKAN DataStore, SQL-kyselyt) ja hyvinvointialueiden kunnat (Tilastokeskuksen luokitusavain)
 - `test/smoke.mjs`: savutesti
 
@@ -61,3 +62,8 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
   - Rakennepuun pakollisuus päätellään ryhmän nimestä (Pakolliset / Valinnaiset tutkinnon osat), koska osien pakollinen-tieto on usein false myös pakollisissa ryhmissä. Yhteiset tutkinnon osat ovat pakollisia, ellei niitä ole ryhmitelty valinnaisiksi.
   - Tutkinnon osan linkki käyttää viitteen id:tä (/tutkinnonosat/{viiteId}, eperusteet-opintopolku router.ts), ei tutkinnon osan id:tä. Koulutustyypin polku ammatillinen tarkistettu eperusteet-frontend-utils-kirjastosta; linkkejä ei avattu selaimessa.
   - Hakusana rajaa vaatimukset sanan alulla (yli 5 merkin sanoista pudotetaan kaksi viimeistä merkkiä: hieronta osuu sanaan hieronnan).
+- 13.11.2026 v1.12: avoimet_tyopaikat (suunnitelma Liittimet/suunnitelmat/tyomarkkinatori.md vaihe A, päätös Ohjaamo C1). KEHA-keskuksen työnvälitystilasto StatFinissä (CC BY 4.0): kuukausisarja (oletus 12, enintään 36 kk), uusin kuukausi ja muutos vuodentakaisesta samasta kuukaudesta, maakuntien järjestys, työnantajan sektori (12uz) ja valinnaisesti työnhakijat (kaikki ja työttömät) sekä suhdeluku. Salassa pidetyt pienet luvut näkyvät muodossa "salassa (...)", ei nollana. Kunta ohjataan maakuntaan, ja kunnan kaikki avoimet työpaikat haetaan taulukosta 12r5. Kyselyt: 12tu-rakenne (GET, välimuisti 1 vrk) ja enintään 3 datakyselyä (12tu, 12uz, kunnalla 12r5); kunnan maakuntaa varten lisäksi 12r5-rakenne ja luokitusavain. Välimuistiton 12tu-kysely kestää StatFinissä noin 5–9 s (mitattu 13.11.2026), Cache API 1 vrk. Poikkeamat suunnitelmasta:
+  - Hierojat ovat AML 2010:ssä luokassa 53294, joka on 4-numerotasolla ryhmässä 5329 Muut terveydenhuoltoalan työntekijät (mukana mm. hammashoitajat ja välinehuoltajat), ei 3255. Jalkojenhoitaja (terveydenhuolto) ja jalkaterapeutti ovat ryhmässä 3255, pedikyristi ryhmässä 5142. Ryhmä 3259 on toimintaterapeutit, kiropraktikot, osteopaatit ja naprapaatit. Tarkistettu Tilastokeskuksen luokituspalvelusta (ammatti_1_20100101). Ryhmän sisältö kerrotaan tulosteessa.
+  - Työnantajan sektori (12uz ja 12v6) on vain kahden numeron ammattiluokille (esim. 51 Palvelutyöntekijät), ei yksittäiselle ammattiryhmälle. Tulosteessa kerrotaan tämä.
+  - Kunnan luvut (12r5) ovat avoimet työpaikat laskentapäivänä ja uudet avoimet työpaikat kuukauden aikana, eivät avoinna kuukauden aikana; ammattijakoa ei ole.
+  - Salassapitomerkintä on StatFinissä "..." (suunnitelmassa ".."); molemmat tulkitaan salassa pidetyksi.

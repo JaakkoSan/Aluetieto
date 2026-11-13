@@ -1,5 +1,6 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
 import worker from "../src/index.js";
+import { cellText } from "../src/tyonv.js";
 
 // MML_API_KEY ympäristömuuttujana testaa geokoodauksen oikeaa rajapintaa vasten.
 const ENV = process.env.MML_API_KEY ? { MML_API_KEY: process.env.MML_API_KEY } : {};
@@ -30,11 +31,16 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.instructions.includes("tutkinnon_osaaminen"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat"), "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 27 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (27, readOnlyHint)");
+check(list.result?.tools?.length === 28 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (28, readOnlyHint)");
+
+// Työnvälitystilasto: salassa pidetty luku ei saa näkyä nollana.
+check(cellText({ value: null, status: "..." }) === "salassa (...)" && cellText({ value: 0, status: null }) === "0" && cellText({ value: null, status: null }) === "ei tietoa", "avoimet_tyopaikat: salassa pidetty luku (..., 0, puuttuva)");
 
 const show = process.argv.includes("-v");
+const monthLines = (t) => (t.match(/^  \d{1,2}\/\d{4}: /gm) ?? []).length;
+const TP_NUM = /Uusin kuukausi \d{1,2}\/20\d\d: (\d[\d\u00a0 ]*|salassa \(\.\.\.\)) avointa työpaikkaa/;
 const cases = [
   ["etsi_toimiala", { hakusana: "kauneudenhoito" }, (t) => t.includes("96220")],
   ["etsi_toimiala", { hakusana: "881" }, (t) => t.includes("88101")],
@@ -109,6 +115,17 @@ const cases = [
   ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "107623" }, (t) => t.includes("Kasvohoitokokonaisuuksien toteuttaminen (tutkinnon osan koodi 107623)"), 4],
   ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "999999" }, (t) => t.includes("koodia 999999 ei ole perusteessa")],
   ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "lentokoneen huolto" }, (t) => t.includes("ei löytynyt perusteesta OPH-7086-2025") && t.includes("- Ihokarvojen poistaminen")],
+  // Avoimet työpaikat (KEHA-keskuksen työnvälitystilasto, StatFin). Neljäs arvo = pyyntöjen enimmäismäärä.
+  ["avoimet_tyopaikat", { ammatti: ["kosmetologi"], alue: "Uusimaa" }, (t) => t.includes("5142 KOSMETOLOGIT YM., Uusimaa") && TP_NUM.test(t) && t.includes("Vuotta aiemmin") && monthLines(t) === 12 && t.includes("Maakunnat") && t.includes("(valittu alue)") && t.includes("51 Palvelutyöntekijät") && t.includes("Työmarkkinatorille") && t.includes("ei tarkoita nollaa") && t.includes("Lähde: KEHA-keskus, työnvälitystilasto; Tilastokeskus, StatFin (CC BY 4.0), https://stat.fi/tilasto/tyonv"), 3],
+  ["avoimet_tyopaikat", { ammatti: ["kosmetologi"] }, (t) => t.includes("Alue: Koko maa") && t.includes("5142 KOSMETOLOGIT YM., Koko maa") && TP_NUM.test(t)],
+  ["avoimet_tyopaikat", { ammatti: ["kampaaja"] }, (t) => t.includes("5141 KAMPAAJAT JA PARTURIT, Koko maa") && TP_NUM.test(t) && /Maakunnat \d{1,2}\/20\d\d \(koko maa \d/.test(t)],
+  ["avoimet_tyopaikat", { ammatti: ["parturi-kampaaja"], alue: "Pirkanmaa", kuukausia: 12 }, (t) => t.includes("5141 KAMPAAJAT JA PARTURIT, Pirkanmaa") && monthLines(t) === 12],
+  ["avoimet_tyopaikat", { ammatti: ["5142"], alue: "MK06", kuukausia: 36 }, (t) => t.includes("Pirkanmaa") && monthLines(t) === 36 && t.includes("Keskiarvo")],
+  ["avoimet_tyopaikat", { ammatti: ["hieroja"], vertailu: true }, (t) => t.includes("5329 MUUT TERVEYDENHUOLTOALAN TYÖNTEKIJÄT") && t.includes("ei ole pelkkien hierojien") && /Työnhakijoita \d{1,2}\/20\d\d kuukauden aikana: \d/.test(t) && t.includes("työnhakijaa kohden") && t.includes("avoimia | työnhakijoita | työttömiä")],
+  ["avoimet_tyopaikat", { ammatti: ["kosmetologi", "parturi-kampaaja"], alue: "Kuopio", kuukausia: 3 }, (t) => t.includes("Alue: Pohjois-Savo (kunta Kuopio") && t.includes("5141 KAMPAAJAT JA PARTURIT, Pohjois-Savo") && t.includes("KUNTA KUOPIO") && /Avoimia työpaikkoja kuukauden laskentapäivänä \d{1,2}\/20\d\d: \d/.test(t) && t.includes("tyonv/12r5")],
+  ["avoimet_tyopaikat", { ammatti: ["avaruuslentäjä"] }, (t) => t.includes("Ammattia \"avaruuslentäjä\" ei löytynyt") && t.includes("tilaston_rakenne")],
+  ["avoimet_tyopaikat", { ammatti: ["opettaja"] }, (t) => t.includes("vastaa useaa ammattiryhmää") && t.includes("2320 Ammatillisen koulutuksen opettajat")],
+  ["avoimet_tyopaikat", { ammatti: ["kampaaja"], alue: "Atlantis" }, (t) => t.includes("Aluetta \"Atlantis\" ei löytynyt")],
 ];
 for (const [name, args, pred, maxFetch] of cases) {
   const t0 = Date.now();
