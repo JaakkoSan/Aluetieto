@@ -28,6 +28,8 @@ Claude-liitin (MCP-palvelin), joka yhdistää PRH:n YTJ-yritystiedot, Tilastokes
 | `asiakastarkistus` | Yrityksen julkiset taustatiedot yhteen: tila ja tilanne, ikä, rekisterit, kaupparekisterin konkurssi-, saneeraus-, selvitystila- ja poistomerkinnät, viimeisin tilinpäätös, tilinpäätöksen avainluvut, yhteisöverot ja havainnot (ei maksuhäiriöitä eikä luottoluokitusta) |
 | `saavutettavuusalue` | Asukkaat (sukupuoli, ikäryhmät) säteen sisällä pisteestä 1 km väestöruuduista, postinumeroalueet osuuksineen, valinnaisesti toimialan yritykset ja asukasta per yritys |
 | `korot` | Korkolain viitekorko ja viivästyskorot (4 ja 4 a §) annettuna päivänä, EKP:n ohjauskorot, viitekorkojen historia vuodesta 2009 |
+| `tulevat_paivat` | Markkinointikalenteri aikavälille: pyhä- ja juhlapäivät, aatot, liputuspäivät, kaupalliset sesongit, kesäaika, YK:n ja WHO:n sekä suomalaisten järjestöjen teemapäivät, valinnaisesti kunnan koululomat ja kampanjan aloituspäivä; jokaisella rivillä sääntö, lähde ja tarkistuspäivä |
+| `koululomat` | Kunnan peruskoulujen työ- ja loma-ajat lukuvuodelta (nyt Kotka 2026–2027) ja valtakunnalliset säännöt |
 
 ## Tärkeä rajoitus
 
@@ -54,6 +56,8 @@ YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, 
 - Saavutettavuusalue: Tilastokeskuksen WFS `geo.stat.fi/geoserver` (CC BY 4.0): väestöruutujen keskipisteet `vaestoruutu:vaki2025_1km_kp` (asukkaat, sukupuoli, ikäryhmät; alle 10 asukkaan ruuduissa jakaumat salattu) ja postinumeroalueet `postialue:pno_tilasto_2026` (rajat ja asukasluku). Haku rajataan bboxilla (`minLon,minLat,maxLon,maxLat,EPSG:4326`), ja säteen sisällä olo lasketaan haversine-etäisyydellä. Postinumeron keskipiste on asutuksen (väestöpainotettu) keskipiste. Välimuisti 30 vrk. Ajoaika-alueet lisätään, kun reitityspalvelu on valittu.
 
 - Asiakastarkistus yhdistää YTJ:n, kaupparekisterin ilmoitukset, PRH:n digitaaliset tilinpäätökset ja Verohallinnon yhteisöverotiedot. Yrityksen tilanteen koodit (KONK, SELTILA, SANE) suomennetaan YTJ:n description-rajapinnan mukaan. Verovelkarekisteristä ei ole rajapintaa eikä avointa dataa (Verohallinto ei julkaise listaa), joten se ohjataan tarkistamaan YTJ:n verkkopalvelusta.
+
+- Markkinointikalenteri (13.11.2026, `src/kalenteri.js`): ei verkkohakuja. Pyhäpäivät ja liikkuvat juhlat lasketaan säännöistä: kirkkolaki 652/2023 1:6 ja kirkkojärjestys 657/2023 1:4 (pääsiäinen läntisen tavan mukaan, juhannus 20.–26.6. lauantai, pyhäinpäivä 31.10.–6.11. lauantai), laki 388/1937 (itsenäisyyspäivä), asetus liputuksesta 383/1978 2 § (viralliset liputuspäivät), perusopetusasetus 852/1998 7 § (koulutyö päättyy viikon 22 lauantaina) ja direktiivi 2000/84/EY (kesäaika). Vakiintuneet liputuspäivät sisäministeriön sivulta (omat nimet, Lähde-linkki; sivuston teksti ei ole kopioitu, ks. käyttöehdot https://intermin.fi/tietoa-sivustosta). Teemapäivät: 10 käsin valittua YK:n (päätöslauselma, undocs.org) ja WHO:n päivää; YK:n luetteloa ei kopioida, koska YK:n käyttöehdot kieltävät kokoamisen. Suomalaisten järjestöjen päivät järjestöjen omilta sivuilta. Kaupallisten päivien lähteenä Wikidata (CC0). Koululomat Opetushallituksen luettelosta (Kotka). Nimipäiviä ei ole (Yliopiston almanakkatoimiston tekijänoikeus). Tiedot päivitetään käsin kerran vuodessa (PROJECT.md).
 
 ## Sotkanet: eräpäivitys D1:een
 

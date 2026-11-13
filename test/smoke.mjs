@@ -1,6 +1,7 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
 import worker from "../src/index.js";
 import { cellText, resolveOccupation } from "../src/tyonv.js";
+import * as kal from "../src/kalenteri.js";
 
 // MML_API_KEY ympäristömuuttujana testaa geokoodauksen oikeaa rajapintaa vasten.
 const ENV = process.env.MML_API_KEY ? { MML_API_KEY: process.env.MML_API_KEY } : {};
@@ -31,9 +32,10 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.0" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 28 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (28, readOnlyHint)");
+check(list.result?.tools?.length === 30 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (30, readOnlyHint)");
+check(list.result.tools.filter((t) => ["tulevat_paivat", "koululomat"].includes(t.name)).every((t) => t.annotations.openWorldHint === false), "kalenterityökalut: openWorldHint false");
 
 // Työnvälitystilasto: salassa pidetty luku ei saa näkyä nollana.
 check(cellText({ value: null, status: "..." }) === "salassa (...)" && cellText({ value: 0, status: null }) === "0" && cellText({ value: null, status: null }) === "ei tietoa", "avoimet_tyopaikat: salassa pidetty luku (..., 0, puuttuva)");
@@ -47,10 +49,77 @@ check(cellText({ value: null, status: "..." }) === "salassa (...)" && cellText({
   check(!bad.length, `avoimet_tyopaikat: ammattinimet koodeiksi${bad.length ? ` (väärin: ${bad.map(([n]) => n).join(", ")})` : ""}`);
 }
 
+// Markkinointikalenteri: laskusäännöt tunnettuja päiviä vasten (lähteet kommenteissa, ei muistista).
+{
+  const f = (d) => kal.iso(d);
+  // Gregoriaaninen pääsiäispäivä: Utrechtin yliopisto, R. H. van Gent, "Astronomical and Gregorian Easter Sunday"
+  // (Meeus, Mathematical Astronomy Morsels), https://webspace.science.uu.nl/~gent0113/easter/easter_text3a.htm, luettu 13.11.2026.
+  // 2026: pitkäperjantai 3.4. ja 2. pääsiäispäivä 6.4. (myhelsinki.fi, Pääsiäinen 2026 Helsingissä) => 5.4.
+  // 2027: Yliopiston almanakkatoimisto, Liputuspäivät 2027: Marian ilmestyspäivä siirtyy palmusunnuntaita edeltävään sunnuntaihin 14.3.2027 => palmusunnuntai 21.3., pääsiäinen 28.3.
+  const easter = { 2019: "2019-04-21", 2026: "2026-04-05", 2027: "2027-03-28", 2038: "2038-04-25", 2045: "2045-04-09", 2049: "2049-04-18", 2057: "2057-04-22", 2069: "2069-04-14", 2076: "2076-04-19", 2089: "2089-04-03", 2095: "2095-04-24", 2096: "2096-04-15" };
+  const bad = Object.entries(easter).filter(([y, d]) => f(kal.paasiainen(+y)) !== d);
+  check(!bad.length, `kalenteri: pääsiäispäivä 12 vuotena (2019–2096)${bad.length ? ` väärin: ${bad.map(([y]) => y).join(", ")}` : ""}`);
+  // Yliopiston almanakkatoimisto, Liputuspäivät 2026 ja 2027 (luettu 13.11.2026).
+  const want = [
+    [(y) => kal.nsViikonpaiva(y, 5, 0, 2), { 2026: "2026-05-10", 2027: "2027-05-09" }, "äitienpäivä"],
+    [(y) => kal.nsViikonpaiva(y, 5, 0, 3), { 2026: "2026-05-17", 2027: "2027-05-16" }, "kaatuneitten muistopäivä"],
+    [(y) => kal.viikonpaivaAlkaen(y, 6, 20, 6), { 2026: "2026-06-20", 2027: "2027-06-26" }, "juhannus"],
+    [(y) => kal.viimeinenViikonpaiva(y, 8, 6), { 2026: "2026-08-29", 2027: "2027-08-28" }, "Suomen luonnon päivä"],
+    [(y) => kal.nsViikonpaiva(y, 11, 0, 2), { 2026: "2026-11-08", 2027: "2027-11-14" }, "isänpäivä"],
+    // OPH: Kotkan koulu päättyy 5.6.2027 (perusopetusasetus 7 §: viikon 22 viimeinen arkipäivä).
+    [(y) => kal.koulunPaattyminen(y), { 2027: "2027-06-05" }, "koulun päättyminen"],
+  ];
+  for (const [fn, ref, nimi] of want) {
+    const v = Object.entries(ref).filter(([y, d]) => f(fn(+y)) !== d);
+    check(!v.length, `kalenteri: ${nimi} ${Object.keys(ref).join(", ")}${v.length ? ` väärin: ${v.map(([y]) => `${y} ${f(fn(+y))}`).join(", ")}` : ""}`);
+  }
+  // Säännöt kaikille vuosille 2026–2100.
+  const viat = [];
+  for (let y = 2026; y <= 2100; y++) {
+    const e = kal.paasiainen(y);
+    if (e.getUTCDay() !== 0 || e < kal.pvm(y, 3, 22) || e > kal.pvm(y, 4, 25)) viat.push(`pääsiäinen ${y}`);
+    const j = kal.viikonpaivaAlkaen(y, 6, 20, 6);
+    if (j.getUTCDay() !== 6 || j < kal.pvm(y, 6, 20) || j > kal.pvm(y, 6, 26)) viat.push(`juhannus ${y}`);
+    const p = kal.viikonpaivaAlkaen(y, 10, 31, 6);
+    if (p.getUTCDay() !== 6 || p < kal.pvm(y, 10, 31) || p > kal.pvm(y, 11, 6)) viat.push(`pyhäinpäivä ${y}`);
+    const k = kal.koulunPaattyminen(y);
+    if (k.getUTCDay() !== 6 || kal.isoViikko(k) !== 22) viat.push(`koulu ${y}`);
+    const bf = kal.blackFriday(y);
+    if (bf.getUTCDay() !== 5 || bf.getUTCMonth() !== 10 || bf.getUTCDate() < 23 || bf.getUTCDate() > 29) viat.push(`Black Friday ${y}`);
+    for (const m of [3, 10]) {
+      const s = kal.viimeinenViikonpaiva(y, m, 0);
+      if (s.getUTCDay() !== 0 || s.getUTCMonth() !== m - 1 || s.getUTCDate() < 25) viat.push(`kesäaika ${m}/${y}`);
+    }
+    for (const n of [2, 3]) {
+      const s = kal.nsViikonpaiva(y, 5, 0, n);
+      if (s.getUTCDay() !== 0 || s.getUTCDate() <= (n - 1) * 7 || s.getUTCDate() > n * 7) viat.push(`toukokuun ${n}. sunnuntai ${y}`);
+    }
+  }
+  check(!viat.length, `kalenteri: säännöt vuosille 2026–2100${viat.length ? ` (${viat.slice(0, 5).join(", ")})` : ""}`);
+  check(f(kal.paasiainen(2026)) === "2026-04-05" && f(kal.lisaa(kal.paasiainen(2026), 39)) === "2026-05-14" && f(kal.lisaa(kal.paasiainen(2026), -49)) === "2026-02-15" && f(kal.blackFriday(2026)) === "2026-11-27" && f(kal.viikonpaivaAlkaen(2026, 10, 31, 6)) === "2026-10-31", "kalenteri: 2026 helatorstai, laskiaissunnuntai, Black Friday, pyhäinpäivä");
+  check(kal.PAIVAT.every((p) => p.lahde?.url?.startsWith("https://") && p.saanto && p.luokat.every((l) => kal.LUOKAT[l])), "kalenteri: jokaisella päivällä lähde, sääntö ja tunnettu luokka");
+  const m = kal.maaratLuokittain();
+  check(m.teema === 10 && m.jarjesto <= 10 && m.liputus_vakiintunut === 15, `kalenteri: määrät ${JSON.stringify(m)}`);
+  check(kal.jasennaPvm("31.2.2026") === null && f(kal.jasennaPvm("13.11.2026")) === "2026-11-13" && kal.kuluvaLukuvuosi(kal.pvm(2026, 11, 13)) === "2026-2027" && kal.kuluvaLukuvuosi(kal.pvm(2027, 7, 31)) === "2026-2027", "kalenteri: päivämäärän jäsennys ja lukuvuosi");
+}
+
 const show = process.argv.includes("-v");
 const monthLines = (t) => (t.match(/^  \d{1,2}\/\d{4}: /gm) ?? []).length;
 const TP_NUM = /Uusin kuukausi \d{1,2}\/20\d\d: (\d[\d\u00a0 ]*|salassa \(\.\.\.\)) avointa työpaikkaa/;
 const cases = [
+  // Markkinointikalenteri (ei verkkohakuja: pyyntöjä 0).
+  ["tulevat_paivat", { alkaen: "2026-11-13", paivia: 30 }, (t) => t.includes("pe 27.11.2026 Black Friday") && t.includes("2 luku 11 §") && t.includes("https://www.finlex.fi/fi/lainsaadanto/1978/38") && t.includes("ma 30.11.2026 Cyber Monday") && t.includes("Lapsen oikeuksien päivä") && t.includes("käsin ylläpidettyjä") && !t.includes("Joululoma"), 0],
+  ["tulevat_paivat", { alkaen: "1.12.2026", paivia: 40, kunta: "Kotka", ennakko_paivia: 14 }, (t) => t.includes("su 20.12.2026 Joululoma alkaa (Kotka), 20.12.2026–6.1.2027") && t.includes("Kampanja alkaa: su 22.11.2026 (14 päivää ennen, ennen aikavälin alkua)") && t.includes("Varmista ne kunnan") && t.includes("Lähde: Opetushallitus"), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", loppuu: "2027-06-30", luokat: ["pyha", "aatto", "liputus_virallinen", "liputus_vakiintunut", "koululoma"], kunta: "Kotka" }, (t) => t.includes("pe 26.3.2027 Pitkäperjantai") && t.includes("su 28.3.2027 Pääsiäispäivä") && t.includes("to 6.5.2027 Helatorstai") && t.includes("su 18.4.2027 Eduskuntavaalit") && t.includes("la 26.6.2027 Juhannuspäivä") && t.includes("pe 25.6.2027 Juhannusaatto") && t.includes("Kaatuneitten muistopäivä") && t.includes("Ei tarjouksiin") && t.includes("la 5.6.2027 Koulu päättyy, kesäloma alkaa (Kotka)") && !t.includes("valtakunnallinen sääntö") && !t.includes("Black Friday"), 0],
+  ["tulevat_paivat", { alkaen: "2027-01-01", paivia: 365, luokat: ["teema", "jarjesto"], ala: "kauneus" }, (t) => t.includes("Kansainvälinen naistenpäivä") && t.includes("Atopiapäivä") && t.includes("Maailman psoriasispäivä") && !t.includes("Maailman sydänpäivä") && t.includes("virallista suomenkielistä nimeä ei ole tarkistettu"), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", paivia: 60, luokat: ["aika"] }, (t) => t.includes("su 28.3.2027 Kesäaika alkaa") && t.includes("Päiviä: 1"), 0],
+  ["tulevat_paivat", { alkaen: "2025-12-01" }, (t) => t.includes("kattaa vuodet 2026–2100"), 0],
+  ["tulevat_paivat", { alkaen: "2026-12-01", paivia: 401 }, (t) => t.includes("1–400"), 0],
+  ["tulevat_paivat", { alkaen: "31.2.2027" }, (t) => t.includes("ei ole päivämäärä"), 0],
+  ["tulevat_paivat", { alkaen: "2026-12-01", kunta: "Helsinki" }, (t) => t.includes("Kunnan \"Helsinki\" koululomia ei ole taulukossa"), 0],
+  ["koululomat", { kunta: "kotka" }, (t) => t.includes("Kotka, lukuvuosi 2026–2027") && t.includes("Syysloma: ma 19.10.2026–pe 23.10.2026") && t.includes("Joululoma: su 20.12.2026–ke 6.1.2027") && t.includes("Talviloma: ma 1.3.2027–pe 5.3.2027") && t.includes("Koulu päättyy: la 5.6.2027") && t.includes("tarkistettu 13.11.2026") && t.includes("suuntaa antavia"), 0],
+  ["koululomat", { kunta: "Kotka", lukuvuosi: "2027–2028" }, (t) => t.includes("lukuvuoden 2027–2028 loma-aikoja ei ole taulukossa") && t.includes("la 3.6.2028"), 0],
+  ["koululomat", { kunta: "Helsinki" }, (t) => t.includes("ei ole taulukossa") && t.includes("oph.fi"), 0],
   ["etsi_toimiala", { hakusana: "kauneudenhoito" }, (t) => t.includes("96220")],
   ["etsi_toimiala", { hakusana: "881" }, (t) => t.includes("88101")],
   ["hae_yrityksia", { toimiala: "96220", paikkakunta: "Kotka" }, (t) => t.includes("YTJ-haku") && t.includes("Toiminimet")],

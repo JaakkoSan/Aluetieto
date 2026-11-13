@@ -28,6 +28,7 @@ import * as kela from "./kela.js";
 import { geocode, NoKeyError, MML_SOURCE } from "./geokoodaus.js";
 import * as ep from "./eperusteet.js";
 import * as tyonv from "./tyonv.js";
+import * as kal from "./kalenteri.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -452,6 +453,40 @@ export const TOOLS = [
       required: ["ammatti"],
     },
   },
+  {
+    name: "tulevat_paivat",
+    description:
+      "Markkinointikalenteri: pyhä- ja juhlapäivät, aatot, viralliset ja vakiintuneet liputuspäivät, kaupalliset sesongit (esim. ystävänpäivä, äitienpäivä, Black Friday), kesäajan vaihdokset, alalle sopivat YK:n ja WHO:n teemapäivät, suomalaisten järjestöjen teemapäivät ja valinnaisesti kunnan koululomat aikavälillä. Pyhäpäivät ja liikkuvat juhlat lasketaan säännöistä; muut ovat käsin ylläpidetty taulukko lähteineen (ei verkkohakuja). Valinnaisesti kampanjan aloituspäivä N päivää ennen. Ei nimipäiviä.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        alkaen: { type: "string", description: "Aikavälin alku muodossa 2026-11-13 tai 13.11.2026. Oletus: tänään (Suomen aikaa)." },
+        paivia: { type: "integer", minimum: 1, maximum: 400, description: "Aikavälin pituus päivinä, 1–400. Oletus 60. Ei käytetä, jos loppuu annetaan." },
+        loppuu: { type: "string", description: "Aikavälin loppu (mukaan lukien). Enintään 400 päivää alusta." },
+        luokat: {
+          type: "array",
+          items: { type: "string", enum: Object.keys(kal.LUOKAT) },
+          description: "Rajaa luokkiin: pyha, aatto, liputus_virallinen, liputus_vakiintunut, sesonki, teema (YK, WHO), jarjesto (suomalaiset järjestöt), koululoma, aika (kesäaika). Oletus: kaikki.",
+        },
+        ala: { type: "string", enum: kal.ALAT, description: "kauneus, hyvinvointi tai terveys rajaa teemapäivät alalle sopiviin (muut luokat näkyvät aina). Oletus kaikki." },
+        kunta: { type: "string", description: "Kunta, jonka koululomat lisätään (nyt taulukossa: Kotka). Oletus: vain valtakunnallinen koulun päättymissääntö." },
+        ennakko_paivia: { type: "integer", minimum: 1, maximum: 120, description: "Näytä kampanjan aloituspäivä näin monta päivää ennen jokaista päivää (esim. 14). Mukaan tulevat myös päivät, joiden kampanja alkaa aikavälillä." },
+      },
+    },
+  },
+  {
+    name: "koululomat",
+    description:
+      "Kunnan peruskoulujen työ- ja loma-ajat lukuvuodelta: koulun alku, syys-, joulu- ja talviloma sekä päättyminen, lähde ja tarkistuspäivä. Käsin ylläpidetty taulukko Opetushallituksen luettelosta (nyt Kotka 2026–2027) sekä valtakunnalliset säännöt (lukuvuosi 1.8.–31.7., koulutyö päättyy viikon 22 lauantaina).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kunta: { type: "string", description: "Kunnan nimi, esim. \"Kotka\"." },
+        lukuvuosi: { type: "string", description: "Lukuvuosi muodossa 2026-2027. Oletus: kuluva lukuvuosi." },
+      },
+      required: ["kunta"],
+    },
+  },
 ];
 
 const TITLES = {
@@ -483,6 +518,8 @@ const TITLES = {
   tutkinnon_peruste: "Tutkinnon peruste (ePerusteet)",
   tutkinnon_osaaminen: "Tutkinnon osan osaamisvaatimukset (ePerusteet)",
   avoimet_tyopaikat: "Avoimet työpaikat ammateittain (työnvälitystilasto)",
+  tulevat_paivat: "Tulevat päivät (markkinointikalenteri)",
+  koululomat: "Koululomat kunnittain",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -490,7 +527,8 @@ for (const t of TOOLS) {
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
-    openWorldHint: true,
+    // Kalenterityökalut eivät hae mitään verkosta.
+    openWorldHint: !["tulevat_paivat", "koululomat"].includes(t.name),
   };
 }
 
@@ -2509,6 +2547,8 @@ const HANDLERS = {
   tutkinnon_peruste: tutkinnonPeruste,
   tutkinnon_osaaminen: tutkinnonOsaaminen,
   avoimet_tyopaikat: avoimetTyopaikat,
+  tulevat_paivat: tulevatPaivat,
+  koululomat,
 };
 
 export async function callTool(name, args = {}, env = {}) {
@@ -2528,4 +2568,141 @@ export async function callTool(name, args = {}, env = {}) {
             : `Odottamaton virhe: ${e?.message ?? e}`;
     return { isError: true, content: [{ type: "text", text: msg }] };
   }
+}
+
+// ---------- Markkinointikalenteri (src/kalenteri.js) ----------
+
+const KAL_LAHDE_RIVI =
+  "Lähteet: Finlex (kirkkolaki 652/2023, kirkkojärjestys 657/2023, asetus 383/1978, laki 388/1937, perusopetusasetus 852/1998), sisäministeriö (https://intermin.fi/suomen-lippu/liputuspaivat), EUR-Lex (direktiivi 2000/84/EY), YK:n päätöslauselmat ja WHO, järjestöjen omat sivut, Opetushallitus (koululomat) ja Wikidata (CC0). Ei ajonaikaisia hakuja.";
+
+function kalPvm(input, nimi) {
+  const d = kal.jasennaPvm(input);
+  if (!d) throw new UserError(`${nimi} "${input}" ei ole päivämäärä. Käytä muotoa 2026-11-13 tai 13.11.2026.`);
+  return d;
+}
+
+function kalVuosiraja(d, nimi) {
+  const y = d.getUTCFullYear();
+  if (y < kal.ENSIMMAINEN_VUOSI || y > kal.VIIMEINEN_VUOSI)
+    throw new UserError(`${nimi} on vuodelta ${y}. Kalenteri kattaa vuodet ${kal.ENSIMMAINEN_VUOSI}–${kal.VIIMEINEN_VUOSI}, koska luettelot kuvaavat tilannetta ${kal.TARKISTETTU}.`);
+}
+
+function kalLahde(t) {
+  const osat = [`${t.lahde.nimi}, ${t.lahde.url}`];
+  if (t.lisalahde) osat.push(`${t.lisalahde.nimi}, ${t.lisalahde.url}`);
+  return `Lähde: ${osat.join("; ")} (tarkistettu ${kal.TARKISTETTU})`;
+}
+
+async function tulevatPaivat(args) {
+  const alku = args.alkaen ? kalPvm(args.alkaen, "alkaen") : kal.tanaan();
+  kalVuosiraja(alku, "Aikavälin alku");
+  let loppu;
+  if (args.loppuu) {
+    loppu = kalPvm(args.loppuu, "loppuu");
+    if (loppu < alku) throw new UserError("loppuu on ennen alkua.");
+    if ((loppu - alku) / 86_400_000 + 1 > 400) throw new UserError("Aikaväli on enintään 400 päivää.");
+  } else {
+    const n = args.paivia ?? 60;
+    if (!Number.isInteger(n) || n < 1 || n > 400) throw new UserError("paivia on kokonaisluku 1–400.");
+    loppu = kal.lisaa(alku, n - 1);
+  }
+  kalVuosiraja(loppu, "Aikavälin loppu");
+
+  const luokat = Array.isArray(args.luokat) && args.luokat.length ? args.luokat : null;
+  if (luokat) {
+    const tuntemattomat = luokat.filter((l) => !kal.LUOKAT[l]);
+    if (tuntemattomat.length) throw new UserError(`Tuntematon luokka: ${tuntemattomat.join(", ")}. Luokat: ${Object.keys(kal.LUOKAT).join(", ")}.`);
+  }
+  const ala = args.ala ?? "kaikki";
+  if (!kal.ALAT.includes(ala)) throw new UserError(`ala on yksi näistä: ${kal.ALAT.join(", ")}.`);
+  const ennakko = args.ennakko_paivia ?? 0;
+  if (!Number.isInteger(ennakko) || ennakko < 0 || ennakko > 120) throw new UserError("ennakko_paivia on kokonaisluku 1–120.");
+
+  let kunta = null;
+  const huom = [];
+  if (args.kunta) {
+    kunta = kal.etsiKunta(args.kunta);
+    if (!kunta) huom.push(`Kunnan "${args.kunta}" koululomia ei ole taulukossa (mukana: ${kal.kunnatTaulukossa().join(", ")}). Mukana on vain valtakunnallinen koulun päättymissääntö. Tarkista lomat kunnan sivuilta.`);
+  }
+
+  const rivit = kal.paivatValilla(alku, loppu, { luokat, ala, kunta, ennakko });
+  const out = [
+    `Tulevat päivät ${kal.fiPvm(alku)}–${kal.fiPvm(loppu)}${luokat ? `, luokat: ${luokat.join(", ")}` : ""}${ala !== "kaikki" ? `, ala: ${ala}` : ""}${kunta ? `, koululomat: ${kunta}` : ""}${ennakko ? `, kampanja ${ennakko} päivää ennen` : ""}`,
+    `Päiviä: ${rivit.length}`,
+    "",
+  ];
+  let ksl = false;
+  for (const t of rivit) {
+    const luokkaTekstit = t.luokat.map((l) => kal.LUOKAT[l]).join("; ");
+    out.push(`${kal.fiPvmVkp(t.date)} ${t.nimi} [${luokkaTekstit}]${t.date > loppu ? " (aikavälin jälkeen)" : ""}`);
+    const piste = (x) => (x.endsWith(".") ? x : `${x}.`);
+    const tiedot = [`Sääntö: ${piste(t.saanto)}`];
+    if (t.asema) tiedot.push(`Asema: ${t.asema}.`);
+    if (t.tarjouksiin === false) tiedot.push("Ei tarjouksiin.");
+    if (t.kampanja) tiedot.push(`Kampanja alkaa: ${kal.fiPvmVkp(t.kampanja)} (${ennakko} päivää ennen${t.kampanja < alku ? ", ennen aikavälin alkua" : ""}).`);
+    out.push(`  ${tiedot.join(" ")}`);
+    if (t.huom) {
+      out.push(`  Huom: ${t.huom}`);
+      if (t.huom.includes("2 luku 11 §")) ksl = true;
+    }
+    out.push(`  ${kalLahde(t)}`);
+  }
+  if (!rivit.length) out.push("Aikavälillä ei ole päiviä valituilla rajauksilla.");
+  out.push("");
+  out.push(...huom);
+  if (ksl) out.push("Alennusmarkkinoinnin huomautus koskee kaikkia tavaroiden alennuskampanjoita, myös joulun alennusmyyntejä.");
+  out.push(kal.YLEINEN_HUOM);
+  if (kunta || rivit.some((t) => t.luokat.includes("koululoma"))) out.push(kal.KOULU_HUOM);
+  out.push("Työkalu antaa päivät ja lähteet, ei markkinointitekstejä. Teemapäivän nimeä, jossa on merkintä \"virallista suomenkielistä nimeä ei ole tarkistettu\", ei pidä esittää virallisena.");
+  out.push(KAL_LAHDE_RIVI);
+  return clip(out.join("\n"));
+}
+
+async function koululomat(args) {
+  const syote = String(args.kunta ?? "").trim();
+  if (!syote) throw new UserError("Anna kunta, esim. \"Kotka\".");
+  let lukuvuosi = args.lukuvuosi ? String(args.lukuvuosi).trim().replace(/[–—/]/g, "-").replace(/\s+/g, "") : kal.kuluvaLukuvuosi(kal.tanaan());
+  const m = lukuvuosi.match(/^(\d{4})-(\d{4})$/);
+  if (!m || +m[2] !== +m[1] + 1) throw new UserError(`Lukuvuosi "${args.lukuvuosi}" ei kelpaa. Käytä muotoa 2026-2027.`);
+  const loppuVuosi = +m[2];
+  const lv = lukuvuosi.replace("-", "–");
+  const saannot = [
+    `Valtakunnalliset säännöt: lukuvuosi alkaa 1.8. ja päättyy 31.7., ja siinä on 190 työpäivää (${"perusopetuslaki 628/1998, 23 §"}, https://www.finlex.fi/fi/lainsaadanto/1998/628). Koulutyö päättyy viikon 22 viimeisenä arkipäivänä (perusopetusasetus 852/1998, 7 §, https://www.finlex.fi/fi/lainsaadanto/1998/852)` +
+      (loppuVuosi >= kal.ENSIMMAINEN_VUOSI && loppuVuosi <= kal.VIIMEINEN_VUOSI ? `, lukuvuonna ${lv} säännön mukaan ${kal.fiPvmVkp(kal.koulunPaattyminen(loppuVuosi))}.` : "."),
+    "Syys-, joulu- ja talviloman ajankohdat päättää kunta (opetuksen järjestäjä), joten niitä ei voi laskea.",
+  ];
+  const kunta = kal.etsiKunta(syote);
+  if (!kunta) {
+    return [
+      `Kunnan "${syote}" koululomia ei ole taulukossa. Mukana: ${kal.kunnatTaulukossa().join(", ")}.`,
+      "Tarkista loma-ajat kunnan sivuilta tai Opetushallituksen luettelosta (maakuntien pääkaupungit): https://www.oph.fi/fi/uutiset/2026/koulujen-tyo-ja-loma-ajat-lukuvuonna-2026-2027",
+      "",
+      ...saannot,
+    ].join("\n");
+  }
+  const r = kal.KOULULOMAT.find((x) => x.kunta === kunta && x.lukuvuosi === lukuvuosi);
+  if (!r) {
+    const muut = kal.KOULULOMAT.filter((x) => x.kunta === kunta).map((x) => x.lukuvuosi.replace("-", "–"));
+    return [
+      `Kunnan ${kunta} lukuvuoden ${lv} loma-aikoja ei ole taulukossa (mukana: ${muut.join(", ")}). Taulukko päivitetään käsin, kun Opetushallitus julkaisee luettelon (yleensä huhtikuussa). Tarkista loma-ajat kunnan sivuilta.`,
+      "",
+      ...saannot,
+    ].join("\n");
+  }
+  const d = (s) => kal.fiPvmVkp(kal.isoPvm(s));
+  const jakso = ([a, b]) => `${d(a)}–${d(b)}`;
+  return [
+    `Peruskoulujen työ- ja loma-ajat, ${kunta}, lukuvuosi ${lv}`,
+    `Koulu alkaa: ${d(r.alkaa)}`,
+    `Syysloma: ${jakso(r.syysloma)}`,
+    `Joululoma: ${jakso(r.joululoma)}`,
+    `Talviloma: ${jakso(r.talviloma)}`,
+    `Koulu päättyy: ${d(r.paattyy)}`,
+    "",
+    `Lähde: ${r.lahde.nimi}, ${r.lahde.url}${r.lisalahde ? `; ${r.lisalahde.nimi}, ${r.lisalahde.url}` : ""} (tarkistettu ${r.tarkistettu})`,
+    kal.KOULU_HUOM,
+    "Tiedot ovat käsin ylläpidettyjä ja ne päivitetään kerran vuodessa.",
+    "",
+    ...saannot,
+  ].join("\n");
 }

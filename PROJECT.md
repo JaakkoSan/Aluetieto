@@ -36,6 +36,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
 - `src/eperusteet.js`: Opetushallituksen ePerusteet (ammatillisten tutkintojen haku, perusteen ratkaisu, rakennepuu, tutkinnon osan kaksi sisältömuotoa, HTML tekstiksi, voimassaolo Suomen ajassa)
 - `src/tyonv.js`: KEHA-keskuksen työnvälitystilasto StatFinissä (ammattinimien muunnos AML 2010 -koodeiksi, maakunnan ja kunnan ratkaisu, kyselyt 12tu, 12uz ja 12r5)
 - `src/kela.js`: Kelan etuustilastot (avoindata.fi:n CKAN DataStore, SQL-kyselyt) ja hyvinvointialueiden kunnat (Tilastokeskuksen luokitusavain)
+- `src/kalenteri.js`: markkinointikalenteri (laskusäännöt, päivätaulukko lähteineen, Kotkan koululomat); ei verkkohakuja
 - `test/smoke.mjs`: savutesti
 
 ## Muutokset
@@ -73,3 +74,19 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
   - Toimialasuodatus käy läpi enintään 2 000 yritystä (ennen 500). Koko maan uudet yritykset viikolta (noin 350) menevät kokonaan läpi; kuukausi (noin 1 900, 13.10.–12.11.2026) on rajalla.
   - PRH:n rajapinta antaa 429, kun hakuja tulee nopeasti noin 30–40 (rajaa ei ole julkaistu). Sivut haetaan kaksi rinnakkain, ja jos raja tulee vastaan, palautetaan jo haetut sivut ja HUOM-rivi puuttuvista sivuista.
   - Kotisivu (website.url) näytetään yrityksen alla, kun se on ilmoitettu.
+- 13.11.2026 v1.14.0: markkinointikalenteri (suunnitelma Liittimet/suunnitelmat/markkinointikalenteri.md, käyttäjän päätökset Ohjaamossa 13.11.2026, 1/7–7/7): tulevat_paivat ja koululomat. Staattinen taulukko ja laskusäännöt ilman ajonaikaisia hakuja (`src/kalenteri.js`), vuodet 2026–2100.
+  - Laskusäännöt: pääsiäinen (Meeus/Jones/Butcher), juhannus ja pyhäinpäivä (kirkkojärjestys 1:4), äitien- ja isänpäivä, kaatuneitten muistopäivä, Suomen luonnon päivä, koulun päättyminen (ISO-viikon 22 lauantai), Black Friday (kiitospäivä + 1), kesäaika (maaliskuun ja lokakuun viimeinen sunnuntai). Testattu vertailupäiviä vasten: pääsiäinen 12 vuotena 2019–2096 (Utrechtin yliopiston Meeus-taulukko, 2026 ja 2027 almanakkatoimiston ja myhelsinki.fi:n tiedoista), liputuspäivät 2026 ja 2027 Yliopiston almanakkatoimiston sivuilta, Kotkan koulun päättyminen OPH:n luettelosta; lisäksi sääntöjen ominaisuudet kaikille vuosille 2026–2100.
+  - Taulukossa 63 riviä: pyhä- ja juhlapäivät 12, aatot 4, viralliset liputuspäivät 6 (lisäksi juhannus ja itsenäisyyspäivä pyhäpäivien rivillä), vakiintuneet liputuspäivät 15 (omat lyhyet nimet, Lähde-linkki sisäministeriöön), kaupalliset sesongit 8 (lisäksi äitien- ja isänpäivä liputuspäivien rivillä), kesäaika 2, valtakunnallinen koulun päättyminen 1, YK:n ja WHO:n teemapäivät 10 (päätöslauselma tai WHO:n sivu; YK:n luetteloa ei kopioitu), suomalaisten järjestöjen teemapäivät 5. Eduskuntavaalit 18.4.2027 kertaluonteisena rivinä (vaalit.fi, almanakka 2027).
+  - Järjestöpäivät tarkistettu järjestön omalta sivulta 13.11.2026 (robots.txt ensin, tunniste `aluetieto-mcp/1.14 (Claude-liitin; markkinointikalenterin kertatarkistus)`, yksi haku per sivu; sivuilla ei käyttöehtoja, vain päivä ja oma nimi): fysioterapiapäivä 8.9. (Suomen Fysioterapeutit), atopiapäivä 14.9. (Allergia-, iho- ja astmaliitto), maailman sydänpäivä 29.9. (Sydänliitto), maailman psoriasispäivä 29.10. (Psoriasisliitto), maailman diabetespäivä 14.11. (Diabetesliitto). Pois jätetty: kansainvälinen miestenpäivä (miessakit.fi:n robots.txt kieltää ClaudeBotin, sivua ei haettu), Meikitön päivä (ajankohtaista lähdettä ei löytynyt), Ihoviikko ja Miesten viikko (viikko vaihtelee vuosittain), maailman unipäivä (ei suomalaisen järjestön sivua), hierojien ja jalkaterapeuttien päivät (ei löytynyt).
+  - Koululomat: vain Kotka 2026–2027 (OPH 10.4.2026, varmistettu sivulta 13.11.2026; Kotkan esiopetuksen tiedote). Kunnan päättymispäivä korvaa samana päivänä valtakunnallisen säännön rivin.
+  - Alennussesongeissa (Black Friday, Cyber Monday, sinkkujen päivä) huomautus kuluttajansuojalain 2 luvun 11 §:stä (sanamuoto 693/2022, tarkistettu Finlexistä 13.11.2026; koskee tavaroita) Finlex-linkillä; loppuun maininta joulun alennusmyynneistä. Muistopäivät (veteraanipäivä, kaatuneitten muistopäivä) merkitty "Ei tarjouksiin"; pitkäperjantaille ja pyhäinpäivälle sävyhuomautus.
+  - Ei mukana: nimipäivät (almanakkatoimiston tekijänoikeus), Ahvenanmaan ja saamelaisten liputuspäivät (sisäministeriön sivulla ei päiviä; ei tarkistettu ensisijaisesta lähteestä), sisäministeriön kertaluonteiset liputussuositukset, Kotkan paikalliset tapahtumat (päätös 6/7).
+  - Kalenterityökaluilla `openWorldHint: false`.
+
+## Markkinointikalenterin vuosittainen ylläpito
+
+Tiedot ovat käsin ylläpidettyjä (`src/kalenteri.js`). Noin 30 minuuttia vuodessa:
+
+- Tammikuu: sisäministeriön liputussivu https://intermin.fi/suomen-lippu/liputuspaivat (vakiintuneet liputuspäivät, nyt 15) ja asetus 383/1978 2 § Finlexistä. Lisää tulevan vuoden vaalipäivät (`vuodet`-rajaus), kun vaali on päätetty.
+- Huhtikuu: Opetushallituksen uutinen "Koulujen työ- ja loma-ajat lukuvuonna ..." (julkaistaan yleensä huhtikuussa) ja Kotkan oma tiedote; lisää Kotkan uusi rivi `KOULULOMAT`-taulukkoon ja uusi `OPH_`-lähde. Muut kunnat vain käyttäjän päätöksellä.
+- Samalla: järjestöpäivien ja YK:n ja WHO:n päivien lähdelinkit (päivä ennallaan, sivu olemassa), `TARKISTETTU`-päivä ja testien vertailupäivät. Haku: robots.txt ensin, rehellinen tunniste, yksi haku per sivu.
