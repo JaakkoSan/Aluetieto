@@ -85,6 +85,7 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
   - Tarkastuksen korjaukset (13.11.2026, versio pysyy 1.14.0): koululomat-työkalun puuttuvan kunnan ja lukuvuoden vastauksiin Lähde-rivi (perusopetuslaki 23 §, perusopetusasetus 7 §, OPH); KSL-huomautuksen muoto "pykälä koskee tavaroita"; luokat hyväksyy myös pilkuilla erotellun merkkijonon, muu muoto ja tuntematon luokka ovat virhe; ennakko_paivia 1–120 sekä skeemassa että koodissa; juhannusaaton riville sisäministeriön lähde.
   - Tarkistetaan seuraavassa ylläpidossa: International Wellness Day on rivillä päätöslauselmana A/RES/80/249 (hakutulokset 13.11.2026), mutta tarkastuksessa YK:n Digital Libraryssä näkyi numero 80/248; oikea numero varmistetaan päätöslauselman tekstistä.
   - Rehellisyyden vuoksi: suunnitteluvaiheessa tehtiin vahingossa yksi robots.txt-haku who.int-sivustolle tunnisteella "x" (ei liittimen koodissa; liitin ei hae mitään verkosta).
+- 13.11.2026 v1.14.1: teemapäivien nimet (käyttäjä, Ohjaamo D1 ja G1). World Hand Hygiene Day nimellä "Kansainvälinen käsihygieniapäivä" (vakiintunut nimi, ei virallista; lisälähde THL:n tiedote 5.5.2025 arkistosta, koska alkuperäinen sivu on poistunut). International Wellness Day pysyy nimellä "Kansainvälinen hyvinvointipäivä", merkintä tarkennettu: vakiintunutta suomenkielistä nimeä ei ole (tarkistettu 13.11.2026; UNRIC, YK-liitto, UM, STM, THL). Muut päätökset: vaalit lisätään vasta vahvistettuina (B1), Ahvenanmaan ja saamelaisten liputuspäivät vasta tarvittaessa (F1).
 
 ## Markkinointikalenterin vuosittainen ylläpito
 

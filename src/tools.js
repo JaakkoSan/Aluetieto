@@ -2660,7 +2660,7 @@ async function tulevatPaivat(args) {
   if (ksl) out.push("Alennusmarkkinoinnin huomautus koskee kaikkia tavaroiden alennuskampanjoita, myös joulun alennusmyyntejä.");
   out.push(kal.YLEINEN_HUOM);
   if (kunta || rivit.some((t) => t.luokat.includes("koululoma"))) out.push(kal.KOULU_HUOM);
-  out.push("Työkalu antaa päivät ja lähteet, ei markkinointitekstejä. Teemapäivän nimeä, jossa on merkintä \"virallista suomenkielistä nimeä ei ole tarkistettu\", ei pidä esittää virallisena.");
+  out.push("Työkalu antaa päivät ja lähteet, ei markkinointitekstejä. Teemapäivän suomenkielistä nimeä, jonka merkinnän mukaan virallista tai vakiintunutta nimeä ei ole, ei pidä esittää virallisena.");
   out.push(KAL_LAHDE_RIVI);
   return clip(out.join("\n"));
 }

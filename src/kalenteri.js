@@ -101,6 +101,7 @@ const L = {
   wikidata: (q, nimi) => ({ nimi: `Wikidata ${q} (${nimi}, CC0)`, url: `https://www.wikidata.org/wiki/${q}` }),
   yk: (res, nimi) => ({ nimi: `YK:n yleiskokouksen päätöslauselma ${res} (${nimi})`, url: `https://undocs.org/${res}` }),
   who: (nimi, url) => ({ nimi: `WHO, ${nimi}`, url }),
+  thl_kasihygienia: { nimi: "THL, tiedote 5.5.2025: Kansainvälinen käsihygieniapäivä 5.5. muistuttaa suojakäsineiden oikeasta käytöstä (alkuperäinen sivu poistunut, arkistoitu kopio)", url: "https://web.archive.org/web/20250505185900/https://thl.fi/-/kansainvalinen-kasihygieniapaiva-5.5.-muistuttaa-suojakasineiden-oikeasta-kaytosta" },
   jarjesto: (nimi, url) => ({ nimi, url }),
 };
 
@@ -202,8 +203,8 @@ export const PAIVAT = [
   { nimi: "Kansainvälinen naistenpäivä", luokat: ["teema"], paiva: kiintea(3, 8), saanto: "8.3.", lahde: { nimi: "YK, International Women's Day (YK tunnusti päivän 1977)", url: "https://www.un.org/en/observances/womens-day/background" }, ala: ["kauneus", "hyvinvointi"] },
   { nimi: "Kansainvälinen onnellisuuden päivä", luokat: ["teema"], paiva: kiintea(3, 20), saanto: "20.3.", lahde: L.yk("A/RES/66/281", "International Day of Happiness"), ala: ["hyvinvointi"] },
   { nimi: "Maailman terveyspäivä", luokat: ["teema"], paiva: kiintea(4, 7), saanto: "7.4. (WHO:n perustamispäivä)", lahde: L.who("World Health Day", "https://www.who.int/campaigns/world-health-day"), ala: ["hyvinvointi", "terveys"] },
-  { nimi: "Kansainvälinen hyvinvointipäivä (International Wellness Day)", luokat: ["teema"], paiva: kiintea(4, 15), saanto: "15.4. (ensimmäisen kerran 2026)", lahde: L.yk("A/RES/80/249", "International Wellness Day"), ala: ["kauneus", "hyvinvointi"], huom: "Virallista suomenkielistä nimeä ei ole tarkistettu; älä esitä nimeä virallisena." },
-  { nimi: "Maailman käsihygieniapäivä (World Hand Hygiene Day)", luokat: ["teema"], paiva: kiintea(5, 5), saanto: "5.5.", lahde: L.who("World Hand Hygiene Day", "https://www.who.int/campaigns/world-hand-hygiene-day"), ala: ["kauneus", "terveys"], huom: "Virallista suomenkielistä nimeä ei ole tarkistettu; älä esitä nimeä virallisena." },
+  { nimi: "Kansainvälinen hyvinvointipäivä (International Wellness Day)", luokat: ["teema"], paiva: kiintea(4, 15), saanto: "15.4. (ensimmäisen kerran 2026)", lahde: L.yk("A/RES/80/249", "International Wellness Day"), ala: ["kauneus", "hyvinvointi"], huom: "Vakiintunutta suomenkielistä nimeä ei ole (tarkistettu 13.11.2026); nimi on käännös, älä esitä sitä virallisena." },
+  { nimi: "Kansainvälinen käsihygieniapäivä (World Hand Hygiene Day)", luokat: ["teema"], paiva: kiintea(5, 5), saanto: "5.5.", lahde: L.who("World Hand Hygiene Day", "https://www.who.int/campaigns/world-hand-hygiene-day"), ala: ["kauneus", "terveys"], lisalahde: L.thl_kasihygienia, huom: "Vakiintunut suomenkielinen nimi (THL), ei virallista nimeä." },
   { nimi: "Kansainvälinen perheiden päivä", luokat: ["teema"], paiva: kiintea(5, 15), saanto: "15.5.", lahde: L.yk("A/RES/47/237", "International Day of Families"), ala: ["hyvinvointi"] },
   { nimi: "Kansainvälinen joogan päivä", luokat: ["teema"], paiva: kiintea(6, 21), saanto: "21.6.", lahde: L.yk("A/RES/69/131", "International Day of Yoga"), ala: ["hyvinvointi"] },
   { nimi: "Kansainvälinen ystävyyden päivä", luokat: ["teema"], paiva: kiintea(7, 30), saanto: "30.7.", lahde: L.yk("A/RES/65/275", "International Day of Friendship"), ala: ["kauneus", "hyvinvointi"] },
