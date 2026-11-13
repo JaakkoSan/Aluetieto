@@ -1,6 +1,6 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
 import worker from "../src/index.js";
-import { cellText } from "../src/tyonv.js";
+import { cellText, resolveOccupation } from "../src/tyonv.js";
 
 // MML_API_KEY ympäristömuuttujana testaa geokoodauksen oikeaa rajapintaa vasten.
 const ENV = process.env.MML_API_KEY ? { MML_API_KEY: process.env.MML_API_KEY } : {};
@@ -37,6 +37,15 @@ check(list.result?.tools?.length === 28 && list.result.tools.every((t) => t.anno
 
 // Työnvälitystilasto: salassa pidetty luku ei saa näkyä nollana.
 check(cellText({ value: null, status: "..." }) === "salassa (...)" && cellText({ value: 0, status: null }) === "0" && cellText({ value: null, status: null }) === "ei tietoa", "avoimet_tyopaikat: salassa pidetty luku (..., 0, puuttuva)");
+
+// Ammattinimien muunnos (AML 2010) ilman rajapintaa.
+{
+  const codes = ["5141", "5142", "3230", "5329", "3255", "5321", "5322"];
+  const occVar = { values: codes, texts: codes.map((c) => `${c} Ryhmä ${c}`) };
+  const want = { "hermoratahieroja": "3230", "lymfahieroja": "3230", "äänimaljahieroja": "3230", "hieroja": "5329", "jalkahoitaja": "5142", "tatuoija": "5142", "lähihoitaja": "5321", "jalkojenhoitaja": "3255", "5322": "5322" };
+  const bad = Object.entries(want).filter(([n, c]) => resolveOccupation(n, occVar).code !== c);
+  check(!bad.length, `avoimet_tyopaikat: ammattinimet koodeiksi${bad.length ? ` (väärin: ${bad.map(([n]) => n).join(", ")})` : ""}`);
+}
 
 const show = process.argv.includes("-v");
 const monthLines = (t) => (t.match(/^  \d{1,2}\/\d{4}: /gm) ?? []).length;
@@ -121,8 +130,11 @@ const cases = [
   ["avoimet_tyopaikat", { ammatti: ["kampaaja"] }, (t) => t.includes("5141 KAMPAAJAT JA PARTURIT, Koko maa") && TP_NUM.test(t) && /Maakunnat \d{1,2}\/20\d\d \(koko maa \d/.test(t)],
   ["avoimet_tyopaikat", { ammatti: ["parturi-kampaaja"], alue: "Pirkanmaa", kuukausia: 12 }, (t) => t.includes("5141 KAMPAAJAT JA PARTURIT, Pirkanmaa") && monthLines(t) === 12],
   ["avoimet_tyopaikat", { ammatti: ["5142"], alue: "MK06", kuukausia: 36 }, (t) => t.includes("Pirkanmaa") && monthLines(t) === 36 && t.includes("Keskiarvo")],
-  ["avoimet_tyopaikat", { ammatti: ["hieroja"], vertailu: true }, (t) => t.includes("5329 MUUT TERVEYDENHUOLTOALAN TYÖNTEKIJÄT") && t.includes("ei ole pelkkien hierojien") && /Työnhakijoita \d{1,2}\/20\d\d kuukauden aikana: \d/.test(t) && t.includes("työnhakijaa kohden") && t.includes("avoimia | työnhakijoita | työttömiä")],
+  ["avoimet_tyopaikat", { ammatti: ["hieroja"], vertailu: true }, (t) => t.includes("5329 MUUT TERVEYDENHUOLTOALAN TYÖNTEKIJÄT") && t.includes("ei ole pelkkien hierojien") && /Työnhakijoita \d{1,2}\/20\d\d kuukauden aikana: \d/.test(t) && t.includes("työnhakijaa kohden") && t.includes("myös työssä olevat hakijat") && t.includes("avoimia | työnhakijoita | työttömiä")],
   ["avoimet_tyopaikat", { ammatti: ["kosmetologi", "parturi-kampaaja"], alue: "Kuopio", kuukausia: 3 }, (t) => t.includes("Alue: Pohjois-Savo (kunta Kuopio") && t.includes("5141 KAMPAAJAT JA PARTURIT, Pohjois-Savo") && t.includes("KUNTA KUOPIO") && /Avoimia työpaikkoja kuukauden laskentapäivänä \d{1,2}\/20\d\d: \d/.test(t) && t.includes("tyonv/12r5")],
+  ["avoimet_tyopaikat", { ammatti: ["lähihoitaja"], kuukausia: 1 }, (t) => t.includes("5321 LÄHIHOITAJAT, Koko maa") && t.includes("ryhmässä 5322 Kodinhoitajat") && t.includes("koodilla 5322")],
+  ["avoimet_tyopaikat", { ammatti: ["kosmetologi"], kuukausia: 0 }, (t) => t.includes("kuukausia on kokonaisluku 1–36"), 0],
+  ["avoimet_tyopaikat", { ammatti: ["kosmetologi"], kuukausia: 37 }, (t) => t.includes("kuukausia on kokonaisluku 1–36"), 0],
   ["avoimet_tyopaikat", { ammatti: ["avaruuslentäjä"] }, (t) => t.includes("Ammattia \"avaruuslentäjä\" ei löytynyt") && t.includes("tilaston_rakenne")],
   ["avoimet_tyopaikat", { ammatti: ["opettaja"] }, (t) => t.includes("vastaa useaa ammattiryhmää") && t.includes("2320 Ammatillisen koulutuksen opettajat")],
   ["avoimet_tyopaikat", { ammatti: ["kampaaja"], alue: "Atlantis" }, (t) => t.includes("Aluetta \"Atlantis\" ei löytynyt")],

@@ -434,17 +434,19 @@ export const TOOLS = [
   {
     name: "avoimet_tyopaikat",
     description:
-      "Avoimet työpaikat ammatin ja maakunnan mukaan KEHA-keskuksen työnvälitystilastosta (Tilastokeskus, StatFin): kuukausittainen sarja, uusin kuukausi ja muutos vuodentakaisesta samasta kuukaudesta, maakuntien järjestys, työnantajan sektori (yritys, kotitalous, julkinen) puolivuosittain ja valinnaisesti työnhakijat samasta ammattiryhmästä. Kattaa vain TE-palveluihin (Työmarkkinatorille) ilmoitetut paikat; ei yritysten nimiä.",
+      "Avoimet työpaikat ammatin ja maakunnan mukaan KEHA-keskuksen työnvälitystilastosta (Tilastokeskus, StatFin): kuukausittainen sarja, uusin kuukausi ja muutos vuodentakaisesta samasta kuukaudesta, maakuntien järjestys, työnantajan sektori (yritys, kotitalous, julkinen) tammi-kesäkuulta ja valinnaisesti työnhakijat samasta ammattiryhmästä. Kattaa vain TE-palveluihin (Työmarkkinatorille) ilmoitetut paikat; ei yritysten nimiä.",
     inputSchema: {
       type: "object",
       properties: {
         ammatti: {
           type: "array",
           items: { type: "string" },
+          minItems: 1,
+          maxItems: 3,
           description: "1–3 ammattia nimellä tai AML 2010 -koodilla (4 numeroa), esim. [\"kosmetologi\"], [\"parturi-kampaaja\", \"hieroja\"], [\"5141\"]. Tuntematon nimi haetaan tilaston ammattiryhmistä tekstinä.",
         },
         alue: { type: "string", description: "Maakunta (nimi tai koodi, esim. \"Uusimaa\", \"MK06\"), kunta (ohjataan maakuntaan, lisäksi kunnan kaikki avoimet paikat) tai \"koko maa\". Oletus: koko maa." },
-        kuukausia: { type: "integer", description: "Aikasarjan pituus kuukausina, 1–36. Oletus 12." },
+        kuukausia: { type: "integer", minimum: 1, maximum: 36, description: "Aikasarjan pituus kuukausina, 1–36. Oletus 12." },
         vertailu: { type: "boolean", description: "true = mukaan työnhakijat (kaikki ja työttömät) samasta ammattiryhmästä ja alueelta sekä työnhakijoita avointa paikkaa kohden." },
       },
       required: ["ammatti"],
@@ -2267,7 +2269,11 @@ async function avoimetTyopaikat(args) {
   const inputs = raw.map((x) => String(x).trim()).filter(Boolean);
   if (!inputs.length) throw new UserError('Anna ammatti, esim. ["kosmetologi"] tai ["5141"].');
   if (inputs.length > TP_MAX_OCC) throw new UserError(`Anna enintään ${TP_MAX_OCC} ammattia kerralla.`);
-  const months = Math.min(36, Math.max(1, Math.round(Number(args.kuukausia) || 12)));
+  let months = 12;
+  if (args.kuukausia !== undefined && args.kuukausia !== null && args.kuukausia !== "") {
+    months = Number(args.kuukausia);
+    if (!Number.isInteger(months) || months < 1 || months > 36) throw new UserError("kuukausia on kokonaisluku 1–36 (oletus 12).");
+  }
   const seekers = !!args.vertailu;
   const budget = newBudget(12);
 
@@ -2332,8 +2338,10 @@ async function avoimetTyopaikat(args) {
       const all = at(o.code, region.code, latest, "HAKIJAYHT", "SSS");
       const unemp = at(o.code, region.code, latest, "HAKIJAYHT", "2");
       out.push(`Työnhakijoita ${tyonv.monthLabel(latest)} kuukauden aikana: ${tpCell(all)}, joista työttömiä ${tpCell(unemp)}.`);
-      if (cur.value > 0 && all.value != null) {
-        out.push(`Avoimia työpaikkoja ${fmtDec(cur.value / all.value, 2)} työnhakijaa kohden (${fmtDec(all.value / cur.value, 1)} työnhakijaa avointa paikkaa kohden).`);
+      if (cur.value > 0 && all.value > 0) {
+        out.push(
+          `Avoimia työpaikkoja ${fmtDec(cur.value / all.value, 2)} työnhakijaa kohden (${fmtDec(all.value / cur.value, 1)} työnhakijaa avointa paikkaa kohden). Suuntaa-antava: työnhakijoihin kuuluvat kaikki kuukauden aikana työnhakijoina olleet, myös työssä olevat hakijat, ja ammattiryhmä on työvoimaviranomaisen asiakasrekisteriin hakijalle kirjattu ammatti.`,
+        );
       }
     }
     const vals = shown.map((m) => at(o.code, region.code, m));

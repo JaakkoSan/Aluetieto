@@ -26,10 +26,11 @@ const fold = (s) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
  */
 const NAME_RULES = [
   { re: /parturi|kampaa|hiusmuotoil|hiusala/, code: "5141" },
-  { re: /kosmetolog|manikyr|pedikyr|maskeera|meikk|kynsi|ripsi|kauneudenhoi|ihonhoit|sokeroi|depilaa|karvanpoist/, code: "5142" },
+  { re: /kosmetolog|manikyr|pedikyr|maskeera|meikk|kynsi|ripsi|kauneudenhoi|ihonhoit|sokeroi|depilaa|karvanpoist|jalkahoit|tatuoi/, code: "5142" },
+  // Ennen hierojasääntöä: hermorata-, lymfa- ja äänimaljahierojat ovat ryhmässä 3230.
+  { re: /luontaishoit|vaihtoehtohoit|vyöhyketerap|refleksolog|aromaterap|akupunkt|shiatsu|homeopa|hermoratahier|lymfa|äänimalja/, code: "3230" },
   { re: /hieroj|hieront|kuntohoitaj|hammashoitaj|välinehuoltaj/, code: "5329" },
   { re: /fysioterap|jalkaterap|jalkojenhoit/, code: "3255" },
-  { re: /luontaishoit|vaihtoehtohoit|vyöhyketerap|refleksolog|aromaterap|akupunkt|shiatsu|homeopa/, code: "3230" },
   { re: /kiroprakt|osteopa|naprapa|toimintaterap/, code: "3259" },
   { re: /lähihoitaj|perushoitaj/, code: "5321" },
   { re: /sairaanhoitaj|terveydenhoitaj/, code: "3221" },
@@ -39,8 +40,9 @@ const NAME_RULES = [
 export const CODE_NOTES = {
   "5329": "Ryhmä 5329 Muut terveydenhuoltoalan työntekijät sisältää hierojat ja kuntohoitajat (53294) sekä mm. hammashoitajat, välinehuoltajat ja apteekkien lääketyöntekijät. Tilastossa ei ole tarkempaa jakoa, joten luku ei ole pelkkien hierojien.",
   "3255": "Ryhmä 3255 Fysioterapeutit ym. sisältää fysioterapeutit, jalkaterapeutit ja terveydenhuollon jalkojenhoitajat. Hierojat ovat ryhmässä 5329 ja pedikyristit ryhmässä 5142.",
-  "5142": "Ryhmä 5142 Kosmetologit ym. sisältää myös mm. manikyristit, pedikyristit, kynsi- ja ripsiteknikot ja maskeeraajat.",
-  "3230": "Ryhmä 3230 Luontais- ja vaihtoehtohoitajat sisältää mm. vyöhyketerapeutit, aromaterapeutit, akupunktiohoitajat ja shiatsuhoitajat.",
+  "5142": "Ryhmä 5142 Kosmetologit ym. sisältää myös mm. manikyristit, pedikyristit, jalkahoitajat (kauneudenhoito), kynsi- ja ripsiteknikot, maskeeraajat ja tatuoijat.",
+  "3230": "Ryhmä 3230 Luontais- ja vaihtoehtohoitajat sisältää mm. vyöhyketerapeutit, aromaterapeutit, akupunktiohoitajat, shiatsuhoitajat sekä hermorata-, lymfa- ja äänimaljahierojat.",
+  "5321": "Ryhmä 5321 Lähihoitajat kattaa laitoksissa työskentelevät lähihoitajat. Kotihoidon lähihoitajat (53221) ovat ryhmässä 5322 Kodinhoitajat (kotipalvelutoiminta), jota ei ole laskettu mukaan; hae tarvittaessa koodilla 5322.",
   "3259": "Ryhmä 3259 sisältää mm. toimintaterapeutit, kiropraktikot, osteopaatit ja naprapaatit.",
 };
 
