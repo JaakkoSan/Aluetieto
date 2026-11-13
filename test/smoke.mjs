@@ -85,6 +85,10 @@ const cases = [
   ["kaupparekisteri_ilmoitukset", { asia: "konkurssi", alkaen: "2026-10-01", asti: "2026-10-31" }, (t) => t.includes("Konkurssi (KONALK)") && /Tiedonanto \(dnro [^)]+\): Konkurssi/.test(t)],
   ["kaupparekisteri_ilmoitukset", { asia: "uudet yritykset", paikkakunta: "Kotka", alkaen: "2026-10-01", asti: "2026-10-31" }, (t) => t.includes("Perusilmoitus") && t.includes("KOTKA")],
   ["kaupparekisteri_ilmoitukset", { ilmoitustyyppi: "perusilmoitus" }, (t) => t.includes("Koko maan haku vaatii asian")],
+  // Koko maan viikko useammalla toimialalla (liidivahti): kaikki yritykset käydään läpi. Kuukautta ei testata, koska se kuluttaa PRH:n käyttörajan (429).
+  ["kaupparekisteri_ilmoitukset", { asia: "uudet yritykset", toimiala: "96210, 96220, 96230, 86950, 86990, 93130", alkaen: "2026-11-02", asti: "2026-11-08" }, (t) => /käytiin läpi \d[\d\s]* eli kaikki/.test(t) && t.includes("Toimialoittain: 96210:") && t.includes("toimialat 96210")],
+  ["kaupparekisteri_ilmoitukset", { asia: "uudet yritykset", alkaen: "2026-11-02", asti: "2026-11-08", toimiala: "74999, 62" }, (t) => t.includes("Kotisivu: https://")],
+  ["kaupparekisteri_ilmoitukset", { asia: "uudet yritykset", toimiala: "1,2,3,4,5,6,7,8,9,10,11" }, (t) => t.includes("enintään 10 toimialaa")],
   ["korot", { paiva: "2024-03-15" }, (t) => t.includes("4,5 %") && t.includes("11,5 %")],
   ...(MML
     ? [

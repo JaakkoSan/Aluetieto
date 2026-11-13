@@ -311,7 +311,7 @@ export const TOOLS = [
         nimi: { type: "string", description: "Toiminimi tai sen osa." },
         ilmoitustyyppi: { type: "string", description: "Perusilmoitus, muutosilmoitus, tilinpäätös, tiedonanto, julkinen haaste velkojille, hakemus, oikaisu, kuntamuutosilmoitus, valvonta-asia, fuusiohakemus tai diffuusiohakemus. Valinnainen." },
         yritysmuoto: { type: "string", description: "Yritysmuodon lyhenne, esim. OY, KY, AY, OK, OYJ, AOY. Valinnainen." },
-        toimiala: { type: "string", description: "Rajaa tulokset päätoimialaan (TOL 2025 -koodi tai nimen osa). Suodatus tehdään enintään 500 ensimmäisestä yrityksestä. Valinnainen." },
+        toimiala: { type: "string", description: "Rajaa tulokset päätoimialaan: TOL 2025 -koodi tai nimen osa, useita pilkulla eroteltuna (esim. \"96210, 96220, 86950\"), enintään 10. Suodatus käy läpi enintään 2 000 yritystä (koko maan uudet yritykset kuukaudelta mahtuvat). Valinnainen." },
         alkaen: { type: "string", description: "Ilmoitukset alkaen (vvvv-kk-pp). Oletus haussa: 30 päivää sitten." },
         asti: { type: "string", description: "Ilmoitukset asti (vvvv-kk-pp). Valinnainen." },
         sivu: { type: "integer", description: "Tulossivu (50 yritystä sivulla)." },
@@ -1343,7 +1343,10 @@ async function julkinenPalvelu(args) {
 
 const KREK_FORMS = ["AOY", "ASH", "ASY", "AY", "AYH", "ETS", "ETY", "SCE", "SCP", "HY", "KOY", "KVJ", "KVY", "KY", "OK", "OP", "OY", "OYJ", "SE", "SL", "SP", "SÄÄ", "TYH", "VOJ", "VOY", "VY", "VALTLL"];
 const KREK_MAX_LIST = 40;
-const KREK_SCAN_PAGES = 10;
+const KREK_SCAN_PAGES = 40; // 2 000 yritystä: koko maan uudet yritykset kuukaudelta (noin 1 500) mahtuvat.
+const KREK_MAX_INDUSTRIES = 10;
+const KREK_MAX_SHOWN = 80;
+const KREK_CONCURRENCY = 2; // PRH vastasi 429, kun sivuja haettiin neljä rinnakkain (13.11.2026).
 
 function isoDate(v, label) {
   if (v === undefined || v === null || v === "") return null;
@@ -1373,6 +1376,25 @@ function noticeLine(n, maxEntries = 6) {
   return `${fmtDate(n.registrationDate)} ${NOTICE_TYPES[n.typeOfRegistration] ?? n.typeOfRegistration ?? "ilmoitus"} (dnro ${n.recordNumber})${shown ? `: ${shown}` : ""}`;
 }
 
+function websiteOf(c) {
+  const u = String(c.website?.url ?? "").trim();
+  if (!u || /\s/.test(u)) return null;
+  return /^https?:\/\//i.test(u) ? u : `https://${u}`;
+}
+
+/** Yksi tai useampi toimiala pilkulla tai puolipisteellä erotettuna: "96210, 96220, 86950". */
+function resolveIndustries(input) {
+  const parts = String(input ?? "").split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return [];
+  if (parts.length > KREK_MAX_INDUSTRIES) throw new UserError(`Anna enintään ${KREK_MAX_INDUSTRIES} toimialaa kerralla.`);
+  const out = [];
+  for (const p of parts) {
+    const r = resolveIndustry(p);
+    if (r && !out.some((o) => o.code === r.code)) out.push(r);
+  }
+  return out;
+}
+
 function companyHead(c) {
   const id = c.businessId?.value;
   const a = address(c);
@@ -1383,7 +1405,7 @@ function companyHead(c) {
 }
 
 async function kaupparekisteriIlmoitukset(args) {
-  const budget = newBudget(15);
+  const budget = newBudget(KREK_SCAN_PAGES + 5);
   const start = isoDate(args.alkaen, "alkaen");
   const end = isoDate(args.asti, "asti");
   let topic = null;
@@ -1445,21 +1467,42 @@ async function kaupparekisteriIlmoitukset(args) {
     noticeRegistrationDateStart: from || undefined,
     noticeRegistrationDateEnd: to || undefined,
   };
-  const ind = args.toimiala ? resolveIndustry(args.toimiala) : null;
+  const inds = args.toimiala ? resolveIndustries(args.toimiala) : [];
+  const ind = inds.length ? inds : null;
   const page = Math.max(1, Number.parseInt(args.sivu, 10) || 1);
 
   let total;
   let companies;
   let scanned = null;
+  let missingPages = 0;
   if (ind) {
     // Toimialaa ei voi rajata rajapinnassa, joten sivut käydään läpi ja suodatetaan tässä.
     const first = await searchNotices({ ...params, page: 1 }, budget);
     total = first.total;
     const pages = Math.min(Math.ceil(total / PAGE_SIZE), KREK_SCAN_PAGES);
-    const rest = await mapLimit(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 4, (p) => searchNotices({ ...params, page: p }, budget));
-    const all = [first, ...rest].flatMap((r) => r.companies);
+    // Jos PRH rajoittaa hakuja (429) kesken, palautetaan jo haetut sivut ja kerrotaan puuttuvat.
+    let stop = false;
+    const rest = await mapLimit(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), KREK_CONCURRENCY, async (p) => {
+      if (stop) return null;
+      try {
+        return await searchNotices({ ...params, page: p }, budget);
+      } catch (e) {
+        if (e instanceof UserError) throw e;
+        stop = true;
+        return null;
+      }
+    });
+    missingPages = rest.filter((r) => !r).length;
+    const all = [first, ...rest.filter(Boolean)].flatMap((r) => r.companies);
     scanned = all.length;
-    companies = all.filter((c) => String(c.mainBusinessLine?.type ?? "").startsWith(ind.code));
+    const seen = new Set();
+    companies = all.filter((c) => {
+      const id = c.businessId?.value;
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      const code = String(c.mainBusinessLine?.type ?? "");
+      return ind.some((i) => code.startsWith(i.code));
+    });
   } else {
     const r = await searchNotices({ ...params, page }, budget);
     total = r.total;
@@ -1475,12 +1518,17 @@ async function kaupparekisteriIlmoitukset(args) {
     name && `nimi "${name}"`,
     location && `postitoimipaikka ${location}`,
     form && `yritysmuoto ${form}`,
-    ind && `toimiala ${ind.code}${ind.name ? ` ${ind.name}` : ""}`,
+    ind && `${ind.length > 1 ? "toimialat" : "toimiala"} ${ind.map((i) => `${i.code}${i.name ? ` ${i.name}` : ""}`).join("; ")}`,
     (from || to) && `ilmoitukset ${from ? fmtDate(from) : ""}–${to ? fmtDate(to) : fmtDate(new Date().toISOString())}`,
   ].filter(Boolean);
   const out = [`Kaupparekisterin ilmoitukset: ${crit.join(", ")}.`];
   if (ind) {
-    out.push(`Ehtoihin osuu ${nf.format(total)} yritystä; niistä käytiin läpi ${scanned}${total > scanned ? ` (enintään ${KREK_SCAN_PAGES * PAGE_SIZE}, rajaa aikaväliä tai paikkakuntaa)` : ""}, ja toimialaan osuu ${companies.length}.`);
+    out.push(`Ehtoihin osuu ${nf.format(total)} yritystä; niistä käytiin läpi ${nf.format(scanned)}${total > KREK_SCAN_PAGES * PAGE_SIZE ? ` (enintään ${nf.format(KREK_SCAN_PAGES * PAGE_SIZE)}; loput jäivät tarkistamatta, rajaa aikaväliä tai paikkakuntaa)` : missingPages ? "" : " eli kaikki"}, ja ${ind.length > 1 ? "toimialoihin" : "toimialaan"} osuu ${companies.length}.`);
+    if (missingPages) out.push(`HUOM: PRH:n rajapinta rajoitti hakuja, joten ${missingPages} tulossivua (${PAGE_SIZE} yritystä sivulla) jäi hakematta. Lista on vajaa; yritä hetken päästä uudelleen tai lyhennä aikaväliä.`);
+    if (ind.length > 1 && companies.length) {
+      const per = ind.map((i) => `${i.code}: ${companies.filter((c) => String(c.mainBusinessLine?.type ?? "").startsWith(i.code)).length}`);
+      out.push(`Toimialoittain: ${per.join(", ")}.`);
+    }
   } else {
     const pages = Math.ceil(total / PAGE_SIZE);
     out.push(`${nf.format(total)} ${total === 1 ? "yritys" : "yritystä"}${pages > 1 ? `, sivu ${page}/${pages} (${PAGE_SIZE} yritystä sivulla)` : ""}.`);
@@ -1490,10 +1538,14 @@ async function kaupparekisteriIlmoitukset(args) {
     return out.join("\n");
   }
   out.push("");
-  for (const c of companies.slice(0, ind ? 60 : PAGE_SIZE)) {
+  const shown = ind ? KREK_MAX_SHOWN : PAGE_SIZE;
+  for (const c of companies.slice(0, shown)) {
     out.push(`- ${companyHead(c)}`);
+    const web = websiteOf(c);
+    if (web) out.push(`  Kotisivu: ${web}`);
     for (const n of uniqueNotices(c).sort((x, y) => (x.registrationDate < y.registrationDate ? 1 : -1)).slice(0, 3)) out.push(`  ${noticeLine(n)}`);
   }
+  if (ind && companies.length > shown) out.push("", `Näytetään ${shown} uusinta ${companies.length} yrityksestä; rajaa aikaväliä tai paikkakuntaa.`);
   if (!ind && page < Math.ceil(total / PAGE_SIZE)) out.push("", `Lisää tuloksia: sivu ${page + 1}.`);
   out.push(
     "",

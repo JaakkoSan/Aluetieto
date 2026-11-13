@@ -2,7 +2,7 @@
 // alipyyntöbudjetti (Workers Paid sallii 10 000 alipyyntöä kutsua kohden; budjetti pitää
 // yksittäisen kutsun keston kohtuullisena). Aikakatkaisu 15 s pyyntöä kohden.
 
-const USER_AGENT = "aluetieto-mcp/1.12 (Claude-liitin; Cloudflare Worker)";
+const USER_AGENT = "aluetieto-mcp/1.13 (Claude-liitin; Cloudflare Worker)";
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 const TIMEOUT_MS = 15_000;
