@@ -1,9 +1,11 @@
 // HTTP-apu: välimuisti (Cloudflare Cache API), uudelleenyritykset ja
-// alipyyntöbudjetti (Workersin ilmaistasolla enintään 50 ulkoista pyyntöä / kutsu).
+// alipyyntöbudjetti (Workers Paid sallii 10 000 alipyyntöä kutsua kohden; budjetti pitää
+// yksittäisen kutsun keston kohtuullisena). Aikakatkaisu 15 s pyyntöä kohden.
 
 const USER_AGENT = "aluetieto-mcp/1.11 (Claude-liitin; Cloudflare Worker)";
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
+const TIMEOUT_MS = 15_000;
 
 export class HttpError extends Error {
   constructor(message, status) {
@@ -63,8 +65,10 @@ export async function fetchJson(url, { method = "GET", body, ttl = 3600, budget,
           ...headers,
         },
         body: payload,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (e) {
+      if (e?.name === "TimeoutError") throw new HttpError(`Lähde ei vastannut ${TIMEOUT_MS / 1000} sekunnissa (${url.split("?")[0]}). Yritä myöhemmin uudelleen.`, 0);
       lastErr = e;
       await sleep(500 * 2 ** attempt);
       continue;
@@ -76,7 +80,13 @@ export async function fetchJson(url, { method = "GET", body, ttl = 3600, budget,
       return null;
     }
     if (res.ok) {
-      const text = await res.text();
+      let text;
+      try {
+        text = await res.text();
+      } catch (e) {
+        if (e?.name === "TimeoutError") throw new HttpError(`Lähteen vastaus jäi kesken (aikakatkaisu ${TIMEOUT_MS / 1000} s).`, 0);
+        throw e;
+      }
       let data;
       try {
         data = JSON.parse(text);

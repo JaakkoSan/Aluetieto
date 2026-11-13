@@ -1860,7 +1860,7 @@ const EP_NOTES = [
 ];
 const EP_HEALTH_NOTE =
   "Tutkinto tai peruste ei yksin anna terveydenhuollon ammattihenkilön oikeuksia. Esimerkiksi lähihoitaja ja koulutettu hieroja ovat nimikesuojattuja ammattinimikkeitä (asetus terveydenhuollon ammattihenkilöistä 564/1994 1 §), ja oikeus käyttää nimikettä tarkistetaan terveydenhuollon ammattihenkilöiden julkisesta rekisteristä JulkiTerhikistä (Lupa- ja valvontavirasto, aiemmin Valvira: https://julkiterhikki.lvv.fi/).";
-const EP_HEALTH_RE = /lähihoitaja|hieroja|hieronnan|sosiaali- ja terveys|jalkojenhoi|apuväline|lääkehoi/i;
+const EP_HEALTH_RE = /lähihoitaja|hieroja|(?<!koira)hieronnan|sosiaali- ja terveys|jalkojenhoi|apuväline/i;
 
 function epKieli(v) {
   const k = String(v ?? "fi").trim().toLowerCase();
@@ -1905,6 +1905,7 @@ function epOsuma(p, q, kieli) {
 async function haeTutkintoja(args) {
   const budget = newBudget(3);
   const q = String(args.hakusana ?? "").trim();
+  if (q.length > 200) throw new UserError("Hakusana on liian pitkä (enintään 200 merkkiä).");
   if (q.length < 2) throw new UserError("Anna hakusana (vähintään 2 merkkiä): tutkinnon, tutkintonimikkeen, osaamisalan tai tutkinnon osan nimi.");
   const kieli = epKieli(args.kieli);
   let tyypit;
@@ -2165,6 +2166,7 @@ function osaContent(o, { kieli, words, arviointi }) {
 const htmlText = (obj, kieli) => ep.htmlText(ep.L(obj, kieli));
 
 async function tutkinnonOsaaminen(args) {
+  if (String(args.hakusana ?? "").length > 200) throw new UserError("Hakusana on liian pitkä (enintään 200 merkkiä).");
   const budget = newBudget(7);
   const kieli = epKieli(args.kieli);
   const { peruste: p } = await epResolve(args.peruste, kieli, budget);
