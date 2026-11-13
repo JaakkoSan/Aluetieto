@@ -105,7 +105,7 @@ const L = {
 };
 
 const KSL_HUOM =
-  "Alennusmarkkinointi: tavaran alennuksessa on ilmoitettava myös alin hinta, jolla tavaraa on markkinoitu alennusta edeltäneiden 30 päivän aikana (kuluttajansuojalaki 2 luku 11 §, koskee tavaroita, ei palveluja; ei oikeudellinen neuvo). Lähde: " +
+  "Alennusmarkkinointi: tavaran alennuksessa on ilmoitettava myös alin hinta, jolla tavaraa on markkinoitu alennusta edeltäneiden 30 päivän aikana (kuluttajansuojalaki 2 luku 11 §; pykälä koskee tavaroita; ei oikeudellinen neuvo). Lähde: " +
   L.ksl.url;
 const SAVY_HUOM = "Muistopäivä: ei sovi tarjouksiin eikä kevyeen markkinointiin.";
 
@@ -152,7 +152,7 @@ export const PAIVAT = [
 
   // Aatot (vakiintuneet; aattopäivät eivät ole säädöksissä juhlapäiviä)
   { nimi: "Vappuaatto", luokat: ["aatto"], paiva: kiintea(4, 30), saanto: "30.4., vappua edeltävä päivä", lahde: L.liputusasetus },
-  { nimi: "Juhannusaatto", luokat: ["aatto"], paiva: (y) => lisaa(juhannus(y), -1), saanto: "juhannuspäivää edeltävä perjantai (19.–25.6.)", lahde: L.kirkkojarjestys, huom: "Suomen lipun päivän liputus alkaa juhannusaattona klo 18 (sisäministeriö)." },
+  { nimi: "Juhannusaatto", luokat: ["aatto"], paiva: (y) => lisaa(juhannus(y), -1), saanto: "juhannuspäivää edeltävä perjantai (19.–25.6.)", lahde: L.kirkkojarjestys, lisalahde: L.sisaministerio, huom: "Suomen lipun päivän liputus alkaa juhannusaattona klo 18 (sisäministeriö)." },
   { nimi: "Jouluaatto", luokat: ["aatto"], paiva: kiintea(12, 24), saanto: "24.12., joulupäivää edeltävä päivä", lahde: L.kirkkolaki },
   { nimi: "Uudenvuodenaatto", luokat: ["aatto"], paiva: kiintea(12, 31), saanto: "31.12., uudenvuodenpäivää edeltävä päivä", lahde: L.kirkkolaki },
 

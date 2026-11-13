@@ -108,7 +108,7 @@ const monthLines = (t) => (t.match(/^  \d{1,2}\/\d{4}: /gm) ?? []).length;
 const TP_NUM = /Uusin kuukausi \d{1,2}\/20\d\d: (\d[\d\u00a0 ]*|salassa \(\.\.\.\)) avointa työpaikkaa/;
 const cases = [
   // Markkinointikalenteri (ei verkkohakuja: pyyntöjä 0).
-  ["tulevat_paivat", { alkaen: "2026-11-13", paivia: 30 }, (t) => t.includes("pe 27.11.2026 Black Friday") && t.includes("2 luku 11 §") && t.includes("https://www.finlex.fi/fi/lainsaadanto/1978/38") && t.includes("ma 30.11.2026 Cyber Monday") && t.includes("Lapsen oikeuksien päivä") && t.includes("käsin ylläpidettyjä") && !t.includes("Joululoma"), 0],
+  ["tulevat_paivat", { alkaen: "2026-11-13", paivia: 30 }, (t) => t.includes("pe 27.11.2026 Black Friday") && t.includes("2 luku 11 §; pykälä koskee tavaroita") && !t.includes("ei palveluja") && t.includes("https://www.finlex.fi/fi/lainsaadanto/1978/38") && t.includes("ma 30.11.2026 Cyber Monday") && t.includes("Lapsen oikeuksien päivä") && t.includes("käsin ylläpidettyjä") && !t.includes("Joululoma"), 0],
   ["tulevat_paivat", { alkaen: "1.12.2026", paivia: 40, kunta: "Kotka", ennakko_paivia: 14 }, (t) => t.includes("su 20.12.2026 Joululoma alkaa (Kotka), 20.12.2026–6.1.2027") && t.includes("Kampanja alkaa: su 22.11.2026 (14 päivää ennen, ennen aikavälin alkua)") && t.includes("Varmista ne kunnan") && t.includes("Lähde: Opetushallitus"), 0],
   ["tulevat_paivat", { alkaen: "2027-03-01", loppuu: "2027-06-30", luokat: ["pyha", "aatto", "liputus_virallinen", "liputus_vakiintunut", "koululoma"], kunta: "Kotka" }, (t) => t.includes("pe 26.3.2027 Pitkäperjantai") && t.includes("su 28.3.2027 Pääsiäispäivä") && t.includes("to 6.5.2027 Helatorstai") && t.includes("su 18.4.2027 Eduskuntavaalit") && t.includes("la 26.6.2027 Juhannuspäivä") && t.includes("pe 25.6.2027 Juhannusaatto") && t.includes("Kaatuneitten muistopäivä") && t.includes("Ei tarjouksiin") && t.includes("la 5.6.2027 Koulu päättyy, kesäloma alkaa (Kotka)") && !t.includes("valtakunnallinen sääntö") && !t.includes("Black Friday"), 0],
   ["tulevat_paivat", { alkaen: "2027-01-01", paivia: 365, luokat: ["teema", "jarjesto"], ala: "kauneus" }, (t) => t.includes("Kansainvälinen naistenpäivä") && t.includes("Atopiapäivä") && t.includes("Maailman psoriasispäivä") && !t.includes("Maailman sydänpäivä") && t.includes("virallista suomenkielistä nimeä ei ole tarkistettu"), 0],
@@ -118,8 +118,14 @@ const cases = [
   ["tulevat_paivat", { alkaen: "31.2.2027" }, (t) => t.includes("ei ole päivämäärä"), 0],
   ["tulevat_paivat", { alkaen: "2026-12-01", kunta: "Helsinki" }, (t) => t.includes("Kunnan \"Helsinki\" koululomia ei ole taulukossa"), 0],
   ["koululomat", { kunta: "kotka" }, (t) => t.includes("Kotka, lukuvuosi 2026–2027") && t.includes("Syysloma: ma 19.10.2026–pe 23.10.2026") && t.includes("Joululoma: su 20.12.2026–ke 6.1.2027") && t.includes("Talviloma: ma 1.3.2027–pe 5.3.2027") && t.includes("Koulu päättyy: la 5.6.2027") && t.includes("tarkistettu 13.11.2026") && t.includes("suuntaa antavia"), 0],
-  ["koululomat", { kunta: "Kotka", lukuvuosi: "2027–2028" }, (t) => t.includes("lukuvuoden 2027–2028 loma-aikoja ei ole taulukossa") && t.includes("la 3.6.2028"), 0],
-  ["koululomat", { kunta: "Helsinki" }, (t) => t.includes("ei ole taulukossa") && t.includes("oph.fi"), 0],
+  ["koululomat", { kunta: "Kotka", lukuvuosi: "2027–2028" }, (t) => t.includes("lukuvuoden 2027–2028 loma-aikoja ei ole taulukossa") && t.includes("la 3.6.2028") && t.includes("Lähde: perusopetuslaki 628/1998, 23 §, https://www.finlex.fi/fi/lainsaadanto/1998/628; perusopetusasetus 852/1998, 7 §"), 0],
+  ["koululomat", { kunta: "Helsinki" }, (t) => t.includes("ei ole taulukossa") && /Lähde: perusopetuslaki 628\/1998.*852; Opetushallitus, https:\/\/www\.oph\.fi/.test(t), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", paivia: 60, luokat: "aika" }, (t) => t.includes("su 28.3.2027 Kesäaika alkaa") && t.includes("Päiviä: 1"), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", paivia: 60, luokat: "aika, kesä" }, (t) => t.includes("Tuntematon luokka: kesä"), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", luokat: 5 }, (t) => t.includes("luokat on lista"), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", ennakko_paivia: 0 }, (t) => t.includes("ennakko_paivia on kokonaisluku 1–120"), 0],
+  ["tulevat_paivat", { alkaen: "2027-03-01", ennakko_paivia: 121 }, (t) => t.includes("ennakko_paivia on kokonaisluku 1–120"), 0],
+  ["tulevat_paivat", { alkaen: "2027-06-01", paivia: 30, luokat: ["aatto"] }, (t) => t.includes("pe 25.6.2027 Juhannusaatto") && t.includes("https://intermin.fi/suomen-lippu/liputuspaivat"), 0],
   ["etsi_toimiala", { hakusana: "kauneudenhoito" }, (t) => t.includes("96220")],
   ["etsi_toimiala", { hakusana: "881" }, (t) => t.includes("88101")],
   ["hae_yrityksia", { toimiala: "96220", paikkakunta: "Kotka" }, (t) => t.includes("YTJ-haku") && t.includes("Toiminimet")],

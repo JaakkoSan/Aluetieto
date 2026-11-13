@@ -82,6 +82,9 @@ Claude-liitin aluetarkistuksiin: YTJ-yritystiedot + Paavo-väestötiedot. Tehty 
   - Alennussesongeissa (Black Friday, Cyber Monday, sinkkujen päivä) huomautus kuluttajansuojalain 2 luvun 11 §:stä (sanamuoto 693/2022, tarkistettu Finlexistä 13.11.2026; koskee tavaroita) Finlex-linkillä; loppuun maininta joulun alennusmyynneistä. Muistopäivät (veteraanipäivä, kaatuneitten muistopäivä) merkitty "Ei tarjouksiin"; pitkäperjantaille ja pyhäinpäivälle sävyhuomautus.
   - Ei mukana: nimipäivät (almanakkatoimiston tekijänoikeus), Ahvenanmaan ja saamelaisten liputuspäivät (sisäministeriön sivulla ei päiviä; ei tarkistettu ensisijaisesta lähteestä), sisäministeriön kertaluonteiset liputussuositukset, Kotkan paikalliset tapahtumat (päätös 6/7).
   - Kalenterityökaluilla `openWorldHint: false`.
+  - Tarkastuksen korjaukset (13.11.2026, versio pysyy 1.14.0): koululomat-työkalun puuttuvan kunnan ja lukuvuoden vastauksiin Lähde-rivi (perusopetuslaki 23 §, perusopetusasetus 7 §, OPH); KSL-huomautuksen muoto "pykälä koskee tavaroita"; luokat hyväksyy myös pilkuilla erotellun merkkijonon, muu muoto ja tuntematon luokka ovat virhe; ennakko_paivia 1–120 sekä skeemassa että koodissa; juhannusaaton riville sisäministeriön lähde.
+  - Tarkistetaan seuraavassa ylläpidossa: International Wellness Day on rivillä päätöslauselmana A/RES/80/249 (hakutulokset 13.11.2026), mutta tarkastuksessa YK:n Digital Libraryssä näkyi numero 80/248; oikea numero varmistetaan päätöslauselman tekstistä.
+  - Rehellisyyden vuoksi: suunnitteluvaiheessa tehtiin vahingossa yksi robots.txt-haku who.int-sivustolle tunnisteella "x" (ei liittimen koodissa; liitin ei hae mitään verkosta).
 
 ## Markkinointikalenterin vuosittainen ylläpito
 

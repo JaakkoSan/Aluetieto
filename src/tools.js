@@ -2608,7 +2608,13 @@ async function tulevatPaivat(args) {
   }
   kalVuosiraja(loppu, "Aikavälin loppu");
 
-  const luokat = Array.isArray(args.luokat) && args.luokat.length ? args.luokat : null;
+  let luokat = null;
+  if (args.luokat !== undefined && args.luokat !== null) {
+    if (typeof args.luokat === "string") luokat = args.luokat.split(",").map((x) => x.trim()).filter(Boolean);
+    else if (Array.isArray(args.luokat)) luokat = args.luokat.map((x) => String(x).trim()).filter(Boolean);
+    else throw new UserError(`luokat on lista, esim. ["pyha", "sesonki"]. Luokat: ${Object.keys(kal.LUOKAT).join(", ")}.`);
+    if (!luokat.length) luokat = null;
+  }
   if (luokat) {
     const tuntemattomat = luokat.filter((l) => !kal.LUOKAT[l]);
     if (tuntemattomat.length) throw new UserError(`Tuntematon luokka: ${tuntemattomat.join(", ")}. Luokat: ${Object.keys(kal.LUOKAT).join(", ")}.`);
@@ -2616,7 +2622,8 @@ async function tulevatPaivat(args) {
   const ala = args.ala ?? "kaikki";
   if (!kal.ALAT.includes(ala)) throw new UserError(`ala on yksi näistä: ${kal.ALAT.join(", ")}.`);
   const ennakko = args.ennakko_paivia ?? 0;
-  if (!Number.isInteger(ennakko) || ennakko < 0 || ennakko > 120) throw new UserError("ennakko_paivia on kokonaisluku 1–120.");
+  if (args.ennakko_paivia !== undefined && args.ennakko_paivia !== null && (!Number.isInteger(ennakko) || ennakko < 1 || ennakko > 120))
+    throw new UserError("ennakko_paivia on kokonaisluku 1–120.");
 
   let kunta = null;
   const huom = [];
@@ -2658,6 +2665,9 @@ async function tulevatPaivat(args) {
   return clip(out.join("\n"));
 }
 
+const KOULU_SAANTO_LAHDE =
+  "Lähde: perusopetuslaki 628/1998, 23 §, https://www.finlex.fi/fi/lainsaadanto/1998/628; perusopetusasetus 852/1998, 7 §, https://www.finlex.fi/fi/lainsaadanto/1998/852";
+
 async function koululomat(args) {
   const syote = String(args.kunta ?? "").trim();
   if (!syote) throw new UserError("Anna kunta, esim. \"Kotka\".");
@@ -2678,6 +2688,8 @@ async function koululomat(args) {
       "Tarkista loma-ajat kunnan sivuilta tai Opetushallituksen luettelosta (maakuntien pääkaupungit): https://www.oph.fi/fi/uutiset/2026/koulujen-tyo-ja-loma-ajat-lukuvuonna-2026-2027",
       "",
       ...saannot,
+      "",
+      `${KOULU_SAANTO_LAHDE}; Opetushallitus, https://www.oph.fi/fi/uutiset/2026/koulujen-tyo-ja-loma-ajat-lukuvuonna-2026-2027`,
     ].join("\n");
   }
   const r = kal.KOULULOMAT.find((x) => x.kunta === kunta && x.lukuvuosi === lukuvuosi);
@@ -2687,6 +2699,8 @@ async function koululomat(args) {
       `Kunnan ${kunta} lukuvuoden ${lv} loma-aikoja ei ole taulukossa (mukana: ${muut.join(", ")}). Taulukko päivitetään käsin, kun Opetushallitus julkaisee luettelon (yleensä huhtikuussa). Tarkista loma-ajat kunnan sivuilta.`,
       "",
       ...saannot,
+      "",
+      KOULU_SAANTO_LAHDE,
     ].join("\n");
   }
   const d = (s) => kal.fiPvmVkp(kal.isoPvm(s));
