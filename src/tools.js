@@ -26,6 +26,7 @@ import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryTe
 import { listIndicators, findIndicator, findRegions, countryRegion, values as soteValues, categoryLabel, pendingYears } from "./sotkanet.js";
 import * as kela from "./kela.js";
 import { geocode, NoKeyError, MML_SOURCE } from "./geokoodaus.js";
+import * as ep from "./eperusteet.js";
 
 const MAX_OUTPUT = 50_000;
 const MAX_POSTCODES = 30;
@@ -383,6 +384,52 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: "hae_tutkintoja",
+    description:
+      "Hakee Opetushallituksen ePerusteista ammatillisten tutkintojen (perus-, ammatti- ja erikoisammattitutkinnot) perusteita tutkinnon, tutkintonimikkeen, osaamisalan tai tutkinnon osan nimellä. Tulos: tutkinto, tyyppi, diaarinumero, voimassaolo tai siirtymäaika, laajuus, osaamisalat, tutkintonimikkeet, osumakohta ja linkki; saman tutkinnon perusteet ryhmiteltynä uusin ensin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hakusana: { type: "string", description: "Tutkinnon, tutkintonimikkeen, osaamisalan tai tutkinnon osan nimi tai sen osa, esim. \"kosmetologi\", \"hieronnan\", \"lähihoitaja\"." },
+        tyyppi: { type: "string", enum: ["perustutkinto", "ammattitutkinto", "erikoisammattitutkinto"], description: "Rajaa tutkintotyyppiin. Oletus: kaikki ammatilliset." },
+        voimassaolo: { type: "string", enum: ["voimassa", "siirtyma", "tulevat", "kaikki"], description: "Oletus: voimassa olevat, siirtymäajalla olevat ja tulevat. kaikki = myös poistuneet." },
+        kieli: { type: "string", enum: ["fi", "sv"], description: "Hakusanan ja nimien kieli. Oletus fi." },
+        sivu: { type: "integer", description: "Tulossivu (10 perustetta sivulla). Oletus 1." },
+      },
+      required: ["hakusana"],
+    },
+  },
+  {
+    name: "tutkinnon_peruste",
+    description:
+      "Ammatillisen tutkinnon peruste (Opetushallitus, ePerusteet): perustiedot ja päivämäärät, tutkinnon muodostuminen puuna (pakolliset ja valinnaiset tutkinnon osat osaamispisteineen, osaamisalat), tutkintonimikkeet, saman tutkinnon muut perusteet sekä määräyksen PDF- ja perustelinkki.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peruste: { type: "string", description: "Diaarinumero (esim. OPH-7086-2025), perusteen id (hae_tutkintoja) tai tutkinnon nimi. Nimellä valitaan voimassa oleva peruste (tai tuleva, jos voimassa olevaa ei ole) ja kerrotaan muut." },
+        osaamisala: { type: "string", description: "Rajaa muodostumisen yhteen osaamisalaan (nimen osa tai koodi)." },
+        kieli: { type: "string", enum: ["fi", "sv"], description: "Perusteen tekstien kieli. Oletus fi." },
+      },
+      required: ["peruste"],
+    },
+  },
+  {
+    name: "tutkinnon_osaaminen",
+    description:
+      "Ammatillisen tutkinnon osan osaamisvaatimukset perusteesta (Opetushallitus, ePerusteet): laajuus, pakollisuus osaamisaloittain, ammattitaitovaatimukset kohdealueittain (yhteisissä tutkinnon osissa osa-alueet ja osaamistavoitteet), ammattitaidon osoittamistavat ja pyydettäessä arviointikriteerit. Ilman tutkinnon osaa palauttaa perusteen tutkinnon osien luettelon.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        peruste: { type: "string", description: "Diaarinumero, perusteen id tai tutkinnon nimi (kuten tutkinnon_peruste-työkalussa)." },
+        tutkinnon_osa: { type: "string", description: "Tutkinnon osan nimi, nimen osa tai koodi (esim. 107623). Tyhjä = osien luettelo." },
+        hakusana: { type: "string", description: "Rajaa vaatimukset, kriteerit ja osa-alueet sanoihin (kaikkien sanojen on löydyttävä; sanan alku riittää). Ilman tutkinnon osaa rajaa luetteloa." },
+        arviointi: { type: "boolean", description: "true = mukaan arviointikriteerit osaamistasoittain. Oletus false." },
+        kieli: { type: "string", enum: ["fi", "sv"], description: "Tekstien kieli. Oletus fi." },
+      },
+      required: ["peruste"],
+    },
+  },
 ];
 
 const TITLES = {
@@ -410,6 +457,9 @@ const TITLES = {
   osoitteen_sijainti: "Osoitteen sijainti (MML)",
   kela_etuudet: "Kelan etuudet alueittain",
   kela_vammaistuet: "Kelan vammaistuet alueittain",
+  hae_tutkintoja: "Hae tutkintoja (ePerusteet)",
+  tutkinnon_peruste: "Tutkinnon peruste (ePerusteet)",
+  tutkinnon_osaaminen: "Tutkinnon osan osaamisvaatimukset (ePerusteet)",
 };
 for (const t of TOOLS) {
   t.annotations = {
@@ -1800,6 +1850,378 @@ async function kelaVammaistuet(args) {
   return clip(lines.join("\n"));
 }
 
+// ---------- ePerusteet (Opetushallitus) ----------
+
+const EP_MAX_TEXT = 40_000;
+const EP_NOTES = [
+  "Peruste kertoo, mitä osaamista tutkinnossa vaaditaan ja miten se arvioidaan. Se ei kerro yksittäisen henkilön osaamista eikä pätevyyttä; tutkinnon suorittaminen todennetaan tutkintotodistuksesta.",
+  "Siirtymäajalla olevaa perustetta sovelletaan siirtymäajan loppuun niihin, jotka ovat aloittaneet tutkinnon sen mukaan.",
+  "Koulutuksen järjestäjät tarkentavat toteutusta paikallisesti (toteutussuunnitelmat); niitä ei ole tässä.",
+];
+const EP_HEALTH_NOTE =
+  "Tutkinto tai peruste ei yksin anna terveydenhuollon ammattihenkilön oikeuksia. Esimerkiksi lähihoitaja ja koulutettu hieroja ovat nimikesuojattuja ammattinimikkeitä (asetus terveydenhuollon ammattihenkilöistä 564/1994 1 §), ja oikeus käyttää nimikettä tarkistetaan terveydenhuollon ammattihenkilöiden julkisesta rekisteristä JulkiTerhikistä (Lupa- ja valvontavirasto, aiemmin Valvira: https://julkiterhikki.lvv.fi/).";
+const EP_HEALTH_RE = /lähihoitaja|hieroja|hieronnan|sosiaali- ja terveys|jalkojenhoi|apuväline|lääkehoi/i;
+
+function epKieli(v) {
+  const k = String(v ?? "fi").trim().toLowerCase();
+  if (k === "fi" || k === "suomi" || k === "") return "fi";
+  if (k === "sv" || k === "ruotsi") return "sv";
+  throw new UserError("Kieli on fi (suomi) tai sv (ruotsi).");
+}
+
+const epType = (p) => ep.TYPES[p.koulutustyyppi] ?? "muu koulutus";
+const epUnit = (p) => (p.suoritustavat?.[0]?.laajuusYksikko === "OSAAMISPISTE" || !p.suoritustavat?.length ? "osp" : ep.unitOf(p.suoritustavat[0]));
+const epName = (p, kieli) => ep.L(p.nimi, kieli);
+
+function epNotes(p, kieli, extra = []) {
+  const names = [epName(p, "fi"), ...(p.tutkintonimikkeet ?? []).map((t) => ep.L(t.nimi, "fi")), ...(p.osaamisalat ?? []).map((o) => ep.L(o.nimi, "fi"))].join(" ");
+  return ["", ...EP_NOTES, ...(EP_HEALTH_RE.test(names) ? [EP_HEALTH_NOTE] : []), ...extra];
+}
+
+function epSource(p, kieli) {
+  return `${ep.EP_SOURCE}, ${epName(p, kieli)}, määräys ${p.diaarinumero}: ${ep.perusteUrl(p.id, kieli)}`;
+}
+
+/** Tutkintonimikkeet osaamisaloineen hakutuloksen tiedoista. */
+function epNimikkeet(p, kieli) {
+  const oa = new Map((p.osaamisalat ?? []).map((o) => [String(o.arvo), ep.L(o.nimi, kieli)]));
+  return (p.tutkintonimikkeet ?? []).map((t) => {
+    const a = t.osaamisalaArvo ? oa.get(String(t.osaamisalaArvo)) : null;
+    const n = ep.L(t.nimi, kieli).trim();
+    return a ? `${n} (${a.trim()})` : n;
+  });
+}
+
+function epOsuma(p, q, kieli) {
+  const f = q.toLowerCase();
+  if (epName(p, kieli).toLowerCase().includes(f)) return null;
+  const tn = (p.tutkintonimikkeet ?? []).map((t) => ep.L(t.nimi, kieli)).filter((n) => n.toLowerCase().includes(f));
+  if (tn.length) return `tutkintonimike ${tn.join(", ")}`;
+  const oa = (p.osaamisalat ?? []).map((o) => ep.L(o.nimi, kieli)).filter((n) => n.toLowerCase().includes(f));
+  if (oa.length) return `osaamisala ${oa.join(", ")}`;
+  return "tutkinnon osan nimi (katso tutkinnon_osaaminen, hakusana)";
+}
+
+async function haeTutkintoja(args) {
+  const budget = newBudget(3);
+  const q = String(args.hakusana ?? "").trim();
+  if (q.length < 2) throw new UserError("Anna hakusana (vähintään 2 merkkiä): tutkinnon, tutkintonimikkeen, osaamisalan tai tutkinnon osan nimi.");
+  const kieli = epKieli(args.kieli);
+  let tyypit;
+  if (args.tyyppi) {
+    const t = ep.parseType(args.tyyppi);
+    if (!t) throw new UserError("Tyyppi on perustutkinto, ammattitutkinto tai erikoisammattitutkinto. Liitin kattaa vain ammatilliset tutkinnot.");
+    tyypit = [t];
+  }
+  let vo;
+  if (args.voimassaolo) {
+    vo = String(args.voimassaolo).trim().toLowerCase().replace("siirtymä", "siirtyma");
+    if (!ep.VOIMASSAOLO_VALUES.includes(vo)) throw new UserError(`Voimassaolo on jokin näistä: ${ep.VOIMASSAOLO_VALUES.join(", ")}.`);
+  }
+  const sivu = Math.max(1, parseInt(args.sivu, 10) || 1);
+  const res = await ep.search({ nimi: q, tyypit, voimassaolo: vo, kieli, sivu: sivu - 1, sivukoko: 10, budget });
+  if (!res.total) {
+    throw new UserError(
+      `Hakusanalla "${q}" ei löytynyt ammatillisten tutkintojen perusteita${vo ? ` (voimassaolo: ${vo})` : ""}. Kokeile sanan osaa (esim. "hieronnan" tai "kauneudenhoito")${kieli === "fi" ? " tai ruotsinkielistä hakua (kieli sv)" : ""}.`,
+    );
+  }
+  if (!res.data.length) throw new UserError(`Sivua ${sivu} ei ole; osumia on ${res.total} (${Math.ceil(res.total / 10)} sivua).`);
+
+  const groups = new Map();
+  for (const p of res.data) {
+    const k = ep.tutkintoKey(p);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(p);
+  }
+  const now = Date.now();
+  const pages = Math.ceil(res.total / 10);
+  const lines = [
+    `ePerusteet: "${q}"${tyypit ? `, ${ep.TYPES[tyypit[0]]}` : ""}${vo ? `, voimassaolo ${vo}` : ""}: ${res.total} perustetta${pages > 1 ? `, sivu ${sivu}/${pages}` : ""}`,
+    "",
+  ];
+  for (const list of groups.values()) {
+    list.sort((a, b) => (b.voimassaoloAlkaa ?? 0) - (a.voimassaoloAlkaa ?? 0));
+    const first = list[0];
+    lines.push(`${epName(first, kieli)} (${epType(first)}${first.laajuus ? `, ${first.laajuus} ${epUnit(first)}` : ""})`);
+    let prevOa = null;
+    let prevTn = null;
+    list.forEach((p, i) => {
+      const st = ep.status(p, now);
+      const korvaa = i > 0 ? `; uudempi peruste ${list[i - 1].diaarinumero}` : "";
+      lines.push(`- ${p.diaarinumero}: ${st.text}${korvaa}. Peruste id ${p.id}.`);
+      const oaList = (p.osaamisalat ?? []).map((o) => ep.L(o.nimi, kieli).trim());
+      const tnList = epNimikkeet(p, kieli);
+      const oa = [...oaList].sort().join("|");
+      const tn = (p.tutkintonimikkeet ?? []).map((t) => ep.L(t.nimi, kieli).trim()).sort().join("|");
+      if (oa && oa !== prevOa) lines.push(`  Osaamisalat: ${oaList.join(", ")}`);
+      if (tn && tn !== prevTn) lines.push(`  Tutkintonimikkeet: ${tnList.join(", ")}`);
+      prevOa = oa;
+      prevTn = tn;
+      const osuma = epOsuma(p, q, kieli);
+      if (osuma) lines.push(`  Osuma: ${osuma}`);
+      lines.push(`  ${ep.perusteUrl(p.id, kieli)}`);
+    });
+    lines.push("");
+  }
+  if (pages > sivu) lines.push(`Lisää tuloksia: sivu ${sivu + 1}.`);
+  lines.push(
+    "Saman tutkinnon perusteet on ryhmitelty uusin ensin; uudempi peruste korvaa vanhemman, jota sovelletaan siirtymäajan loppuun niihin, jotka ovat aloittaneet sen mukaan.",
+    "Tarkemmat tiedot: tutkinnon_peruste (diaarinumero) ja tutkinnon_osaaminen.",
+    "",
+    `${ep.EP_SOURCE}, https://eperusteet.opintopolku.fi/`,
+  );
+  return clip(lines.join("\n"));
+}
+
+async function epResolve(input, kieli, budget) {
+  const q = String(input ?? "").trim();
+  if (!q) throw new UserError("Anna peruste: diaarinumero (esim. OPH-7086-2025), perusteen id tai tutkinnon nimi.");
+  const r = await ep.resolvePeruste(q, { kieli, budget });
+  if (!r) throw new UserError(`Perustetta "${q}" ei löytynyt ammatillisista tutkinnoista (perus-, ammatti- ja erikoisammattitutkinnot). Hae ensin hae_tutkintoja-työkalulla.`);
+  if (r.ehdokkaat) {
+    throw new UserError(
+      `Useita tutkintoja, tarkenna tutkinnon nimellä tai diaarinumerolla:\n${r.ehdokkaat.map((p) => `- ${epName(p, kieli)} (${epType(p)}), ${p.diaarinumero}`).join("\n")}`,
+    );
+  }
+  if (!ep.TYPES[r.peruste.koulutustyyppi]) throw new UserError("Peruste ei ole ammatillinen tutkinto. Liitin kattaa vain ammatilliset perus-, ammatti- ja erikoisammattitutkinnot.");
+  return r;
+}
+
+function epHead(p, kieli, muut, now = Date.now()) {
+  const kielet = [...(p.kielet ?? [])].sort((a, b) => (a === "fi" ? -1 : b === "fi" ? 1 : a.localeCompare(b))).map((k) => ({ fi: "suomi", sv: "ruotsi", en: "englanti", se: "saame" })[k] ?? k).join(", ");
+  const lines = [
+    `${epName(p, kieli)} (${epType(p)}), peruste ${p.diaarinumero}`,
+    `Tila: ${ep.status(p, now).text}`,
+    [
+      p.paatospvm ? `Päätös ${ep.fmtDay(p.paatospvm)}` : null,
+      p.laajuus ? `laajuus ${p.laajuus} ${epUnit(p)}` : null,
+      kielet ? `kielet ${kielet}` : null,
+      `peruste id ${p.id}`,
+    ]
+      .filter(Boolean)
+      .join(", "),
+  ];
+  const oa = (p.osaamisalat ?? []).map((o) => `${ep.L(o.nimi, kieli)} (${o.arvo})`);
+  if (oa.length) lines.push(`Osaamisalat: ${oa.join(", ")}`);
+  const tn = epNimikkeet(p, kieli);
+  if (tn.length) lines.push(`Tutkintonimikkeet: ${tn.join(", ")}`);
+  if (muut?.length) {
+    lines.push(`Saman tutkinnon muut perusteet: ${muut.map((m) => `${m.diaarinumero}: ${ep.status(m, now).text}`).join("; ")}`);
+  }
+  return lines;
+}
+
+async function tutkinnonPeruste(args) {
+  const budget = newBudget(6);
+  const kieli = epKieli(args.kieli);
+  const { peruste: p, muut } = await epResolve(args.peruste, kieli, budget);
+  const [stAll, mk] = await Promise.all([ep.suoritustavat(p.id, budget), ep.maarayskirje(p.id, budget)]);
+  const st = ep.pickSuoritustapa(stAll);
+  if (st) await ep.ensureNames(p.id, st, newBudget(80));
+  const lines = epHead(p, kieli, muut);
+  if (!st) {
+    lines.push("", "Perusteessa ei ole tutkinnon muodostumista.");
+  } else {
+    const kuvaus = ep.htmlText(ep.L(st.rakenne?.kuvaus, kieli));
+    if (kuvaus) lines.push("", "Muodostumisen kuvaus:", cut(kuvaus, 2500));
+    const tree = ep.treeText(st, { kieli, osaamisala: args.osaamisala });
+    if (args.osaamisala && !tree.matched) {
+      const all = ep.osaamisalatOf(st, kieli);
+      throw new UserError(`Osaamisalaa "${args.osaamisala}" ei löytynyt. Perusteen osaamisalat: ${all.map((o) => `${o.nimi}${o.koodi ? ` (${o.koodi})` : ""}`).join(", ") || "ei osaamisaloja"}.`);
+    }
+    lines.push("", `TUTKINNON MUODOSTUMINEN (${ep.unitOf(st)} = osaamispistettä)`, tree.text);
+    if (tree.skipped.length) lines.push(`(Rajattu pois: ${tree.skipped.join(", ")})`);
+    if (stAll.length > 1) lines.push(`Muut suoritustavat: ${stAll.filter((s) => s !== st).map((s) => s.suoritustapakoodi).join(", ")}`);
+  }
+  const liite = mk?.liitteet?.[kieli] ?? mk?.liitteet?.fi;
+  lines.push("");
+  if (liite?.id) lines.push(`Määräys (PDF): ${ep.liiteUrl(p.id, liite.id)}`);
+  lines.push(`Peruste ePerusteissa: ${ep.perusteUrl(p.id, kieli)}`, `Rakenne: ${ep.rakenneUrl(p.id, kieli)}`);
+  lines.push("Tutkinnon osien vaatimukset: tutkinnon_osaaminen (peruste ja tutkinnon osan nimi).");
+  lines.push(...epNotes(p, kieli), "", epSource(p, kieli));
+  return clip(lines.join("\n"));
+}
+
+const fmtLaajuus = (v, unit = "osp") => (v != null ? `${String(v).replace(".", ",")} ${unit}` : "laajuus ei tiedossa");
+
+function asemaText(o, allOa = []) {
+  const pak = o.asemat.filter((a) => a.pakollinen);
+  const val = o.asemat.filter((a) => !a.pakollinen);
+  const names = (list) => {
+    if (list.some((a) => !a.osaamisala)) return null;
+    const set = new Set(list.map((a) => a.osaamisala));
+    if (allOa.length > 2 && allOa.every((n) => set.has(n))) return "kaikilla osaamisaloilla";
+    const missing = allOa.filter((n) => !set.has(n));
+    if (allOa.length > 3 && missing.length && missing.length <= allOa.length / 3) return `kaikilla osaamisaloilla paitsi ${missing.join(", ")}`;
+    return [...set].join(", ");
+  };
+  const out = [];
+  const fmtA = (label, list) => {
+    const n = names(list);
+    return n ? `${label} (${n})` : label;
+  };
+  if (pak.length) out.push(fmtA("pakollinen", pak));
+  if (val.length) out.push(fmtA("valinnainen", val));
+  return out.join("; ");
+}
+
+function osaListText(p, st, osat, kieli, words) {
+  const unit = ep.unitOf(st);
+  const keep = words.length ? osat.filter((o) => words.every((w) => o.nimi.toLowerCase().includes(w))) : osat;
+  if (!keep.length) throw new UserError(`Hakusanalla ei löytynyt tutkinnon osia. Perusteessa on ${osat.length} tutkinnon osaa.`);
+  const allOa = [...new Set(ep.osaamisalatOf(st, kieli).map((a) => a.nimi))];
+  const lines = [...epHead(p, kieli, null), "", `TUTKINNON OSAT (${keep.length}${words.length ? `/${osat.length}` : ""})`];
+  for (const ryhma of ["ammatilliset", "yhteiset"]) {
+    const list = keep.filter((o) => (o.asemat[0]?.ryhma ?? "ammatilliset") === ryhma);
+    if (!list.length) continue;
+    lines.push("", ryhma === "ammatilliset" ? "Ammatilliset tutkinnon osat:" : "Yhteiset tutkinnon osat:");
+    for (const o of list) lines.push(`- ${o.nimi}, ${fmtLaajuus(o.laajuus, unit)}: ${asemaText(o, allOa)}`);
+  }
+  lines.push("", "Osan vaatimukset: tutkinnon_osaaminen (tutkinnon_osa = nimi).", `Peruste ePerusteissa: ${ep.perusteUrl(p.id, kieli)}`);
+  lines.push(...epNotes(p, kieli), "", epSource(p, kieli));
+  return clip(lines.join("\n"));
+}
+
+/** Tutkinnon osan sisältö: { lines, count, hits, hasArviointi }. */
+function osaContent(o, { kieli, words, arviointi }) {
+  const lines = [];
+  let count = 0;
+  let hits = 0;
+  let hasArviointi = false;
+  const add = (title, r) => {
+    count += r.count;
+    hits += r.hits;
+    if (r.lines.length) lines.push("", title, ...r.lines);
+  };
+  const kuvaus = ep.htmlText(ep.L(o.kuvaus, kieli));
+  if (kuvaus && !words.length) lines.push("", "KUVAUS", cut(kuvaus, 3000));
+
+  const av = o.ammattitaitovaatimukset2019;
+  if (av && (av.kohdealueet?.length || av.vaatimukset?.length)) add("AMMATTITAITOVAATIMUKSET", ep.vaatimukset2019(av, { kieli, words }));
+  else if (htmlText(o.ammattitaitovaatimukset, kieli).length > 40) add("AMMATTITAITOVAATIMUKSET", ep.htmlLines(ep.L(o.ammattitaitovaatimukset, kieli), { words }));
+  else if (o.ammattitaitovaatimuksetLista?.length) {
+    const all = ep.flattenTexts(o.ammattitaitovaatimuksetLista, kieli);
+    const keep = words.length ? all.filter((t) => words.every((w) => t.toLowerCase().includes(w))) : all;
+    add("AMMATTITAITOVAATIMUKSET", { lines: keep.map((t) => (t.startsWith("- ") ? t : `- ${t}`)), count: all.length, hits: keep.length });
+  }
+
+  // Yhteisten tutkinnon osien osa-alueet (vain valitun kielen versiot, jos niitä on).
+  const oas = o.osaAlueet ?? [];
+  const inLang = oas.filter((a) => a.nimi?.[kieli]);
+  for (const a of inLang.length ? inLang : oas) {
+    const name = `${ep.L(a.nimi, kieli)}${a.koodiArvo ? ` (${a.koodiArvo})` : ""}`;
+    const nameHit = words.length && words.every((w) => name.toLowerCase().includes(w));
+    const w = nameHit ? [] : words;
+    const block = [];
+    let c = 0;
+    let h = 0;
+    const tav = [
+      ["Pakolliset osaamistavoitteet", a.pakollisetOsaamistavoitteet],
+      ["Valinnaiset osaamistavoitteet", a.valinnaisetOsaamistavoitteet],
+    ];
+    for (const [t, g] of tav) {
+      if (!g?.tavoitteet) continue;
+      const r = ep.vaatimukset2019(g.tavoitteet, { kieli, words: w });
+      c += r.count;
+      h += r.hits;
+      if (r.lines.length) block.push(`${t}${g.laajuus != null ? `, ${fmtLaajuus(g.laajuus)}` : ""}:`, ...r.lines);
+    }
+    for (const g of a.osaamistavoitteet ?? []) {
+      const r = ep.htmlLines(ep.L(g.tavoitteet, kieli), { words: w });
+      c += r.count;
+      h += r.hits;
+      if (r.lines.length) block.push(`${g.pakollinen ? "Pakolliset" : "Valinnaiset"} osaamistavoitteet${g.laajuus != null ? `, ${fmtLaajuus(g.laajuus)}` : ""}:`, ...r.lines);
+      if (g.arviointi?.arvioinninKohdealueet?.length) {
+        hasArviointi = true;
+        if (arviointi) block.push(...ep.arviointiText(g.arviointi, { kieli, words: w }));
+      }
+    }
+    if (a.arviointi?.osaamistasonKriteerit?.length) {
+      hasArviointi = true;
+      if (arviointi && (block.length || !words.length || nameHit)) block.push(...ep.geneerinenText(a.arviointi, { kieli, words: w }));
+    }
+    count += c;
+    hits += h;
+    if (block.length) lines.push("", `OSA-ALUE: ${name}`, ...block);
+  }
+
+  const tavat = ep.htmlText(ep.L(o.ammattitaidonOsoittamistavat, kieli));
+  if (tavat && !words.length) lines.push("", "AMMATTITAIDON OSOITTAMISTAVAT", tavat);
+  for (const vt of o.vapaatTekstit ?? []) {
+    const t = ep.htmlText(ep.L(vt.teksti, kieli));
+    if (t && !words.length) lines.push("", ep.L(vt.nimi, kieli).toUpperCase() || "LISÄTIETOA", t);
+  }
+
+  const gen = o.geneerinenArviointiasteikko;
+  const old = o.arviointi?.arvioinninKohdealueet?.length ? o.arviointi : null;
+  if (gen?.osaamistasonKriteerit?.length || old) hasArviointi = true;
+  if (arviointi) {
+    const al = [...(gen ? ep.geneerinenText(gen, { kieli, words }) : []), ...(old ? ep.arviointiText(old, { kieli, words }) : [])];
+    if (al.length) lines.push("", "ARVIOINTI", ...al);
+  }
+  return { lines, count, hits, hasArviointi };
+}
+
+const htmlText = (obj, kieli) => ep.htmlText(ep.L(obj, kieli));
+
+async function tutkinnonOsaaminen(args) {
+  const budget = newBudget(7);
+  const kieli = epKieli(args.kieli);
+  const { peruste: p } = await epResolve(args.peruste, kieli, budget);
+  const st = ep.pickSuoritustapa(await ep.suoritustavat(p.id, budget));
+  if (!st) throw new UserError(`Perusteessa ${p.diaarinumero} ei ole tutkinnon muodostumista eikä tutkinnon osia.`);
+  await ep.ensureNames(p.id, st, newBudget(80));
+  const osat = ep.osatOf(st, kieli);
+  const words = ep.searchWords(args.hakusana);
+  const q = String(args.tutkinnon_osa ?? "").trim();
+  if (!q) return osaListText(p, st, osat, kieli, words);
+
+  const f = q.toLowerCase().replace(/\s+/g, " ");
+  let hits = osat.filter((o) => o.nimi.toLowerCase() === f || o.nimiFi.toLowerCase() === f);
+  if (!hits.length && /^\d+$/.test(f)) hits = osat.filter((o) => o.viiteId === f || o.osaId === f);
+  if (!hits.length && /^\d{4,7}$/.test(f)) {
+    if (!(p.koodit ?? []).includes(`tutkinnonosat_${f}`)) {
+      throw new UserError(`Tutkinnon osan koodia ${f} ei ole perusteessa ${p.diaarinumero}. Tutkinnon osat: tutkinnon_osaaminen ilman tutkinnon osaa.`);
+    }
+    const byCode = await ep.osaByCode(f, budget);
+    const nm = ep.L(byCode?.nimi, "fi").toLowerCase();
+    hits = osat.filter((o) => o.nimiFi.toLowerCase() === nm);
+  }
+  if (!hits.length) hits = osat.filter((o) => o.nimi.toLowerCase().includes(f) || o.nimiFi.toLowerCase().includes(f));
+  if (!hits.length) {
+    throw new UserError(`Tutkinnon osaa "${q}" ei löytynyt perusteesta ${p.diaarinumero}. Tutkinnon osat:\n${osat.map((o) => `- ${o.nimi}`).join("\n")}`);
+  }
+  if (hits.length > 1) throw new UserError(`Useita tutkinnon osia, tarkenna:\n${hits.map((o) => `- ${o.nimi}`).join("\n")}`);
+  const osa = hits[0];
+  if (!osa.osaId) throw new HttpError("Tutkinnon osan tunnistetta ei löytynyt perusteesta", 0);
+  const o = await ep.tutkinnonOsa(p.id, osa.osaId, budget);
+  if (!o) throw new UserError(`Tutkinnon osan "${osa.nimi}" tietoja ei saatu ePerusteista.`);
+
+  const unit = ep.unitOf(st);
+  const laajuus = osa.laajuus ?? o.laajuus;
+  const lines = [
+    `${ep.L(o.nimi, kieli) || osa.nimi}${o.koodiArvo ? ` (tutkinnon osan koodi ${o.koodiArvo})` : ""}, ${fmtLaajuus(laajuus, unit)}`,
+    `Tutkinto: ${epName(p, kieli)} (${epType(p)}), peruste ${p.diaarinumero}: ${ep.status(p).text}`,
+    `Asema tutkinnossa: ${asemaText(osa, [...new Set(ep.osaamisalatOf(st, kieli).map((a) => a.nimi))])}`,
+  ];
+  if (kieli === "sv" && !o.nimi?.sv) lines.push("Ruotsinkielistä tekstiä ei ole kaikilta osin; puuttuvat kohdat näytetään suomeksi.");
+  const c = osaContent(o, { kieli, words, arviointi: !!args.arviointi });
+  let body = c.lines.join("\n");
+  if (words.length) {
+    if (c.hits) lines.push(`Hakusana "${args.hakusana}": ${c.hits} ${c.hits === 1 ? "vaatimus tai tavoite" : "vaatimusta tai tavoitetta"} (${c.count}:stä).`);
+    else if (body.trim()) lines.push(`Hakusanalla "${args.hakusana}" ei löytynyt ammattitaitovaatimuksia (${c.count}); osumat ovat arviointikriteereissä.`);
+    else lines.push(`Hakusanalla "${args.hakusana}" ei löytynyt vaatimuksia${args.arviointi ? " eikä arviointikriteerejä" : ""} (tutkinnon osassa ${c.count} vaatimusta tai tavoitetta). Kokeile toista sanaa tai jätä hakusana pois.`);
+  }
+  if (body.length > EP_MAX_TEXT) {
+    body = `${body.slice(0, EP_MAX_TEXT)}\n\n… Tuloste katkaistiin pituuden vuoksi. Rajaa hakusanalla (esim. osa-alueen nimi tai vaatimuksen sana)${args.arviointi ? " tai jätä arviointi pois" : ""}.`;
+  }
+  lines.push(body);
+  if (!args.arviointi && c.hasArviointi) lines.push("", "Arviointikriteerit (osaamistasot): pyydä arviointi: true.");
+  lines.push("", `Tutkinnon osa ePerusteissa: ${ep.osaUrl(p.id, osa.viiteId, kieli)}`);
+  lines.push(...epNotes(p, kieli), "", epSource(p, kieli));
+  return clip(lines.join("\n"));
+}
+
 const HANDLERS = {
   etsi_toimiala: etsiToimiala,
   hae_yrityksia: haeYrityksia,
@@ -1825,6 +2247,9 @@ const HANDLERS = {
   osoitteen_sijainti: osoitteenSijainti,
   kela_etuudet: kelaEtuudet,
   kela_vammaistuet: kelaVammaistuet,
+  hae_tutkintoja: haeTutkintoja,
+  tutkinnon_peruste: tutkinnonPeruste,
+  tutkinnon_osaaminen: tutkinnonOsaaminen,
 };
 
 export async function callTool(name, args = {}, env = {}) {

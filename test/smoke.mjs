@@ -1,9 +1,16 @@
-// Savutesti oikeita lähteitä (YTJ, Tilastokeskus) vasten. Ajo: node test/smoke.mjs [-v]
+// Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
 import worker from "../src/index.js";
 
 // MML_API_KEY ympäristömuuttujana testaa geokoodauksen oikeaa rajapintaa vasten.
 const ENV = process.env.MML_API_KEY ? { MML_API_KEY: process.env.MML_API_KEY } : {};
 const MML = !!ENV.MML_API_KEY;
+// Ulkoisten pyyntöjen laskuri (ePerusteet-testit tarkistavat pyyntömäärän kutsua kohden; Node-testissä ei ole välimuistia).
+const realFetch = globalThis.fetch;
+let fetchCount = 0;
+globalThis.fetch = (...a) => {
+  fetchCount++;
+  return realFetch(...a);
+};
 let id = 0;
 async function rpc(method, params) {
   const req = new Request("https://example.test/mcp", {
@@ -23,9 +30,9 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto", "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.instructions.includes("tutkinnon_osaaminen"), "initialize");
 const list = await rpc("tools/list", {});
-check(list.result?.tools?.length === 24 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (24, readOnlyHint)");
+check(list.result?.tools?.length === 27 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (27, readOnlyHint)");
 
 const show = process.argv.includes("-v");
 const cases = [
@@ -79,11 +86,34 @@ const cases = [
   ["kela_etuudet", { etuus: "tuki" }, (t) => t.includes("Useita etuuksia")],
   ["kela_vammaistuet", { alue: "Pyhtää", kuukausi: "2025-06" }, (t) => t.includes("Pyhtää (kunta), 6/2025") && t.includes("Eläkettä saavan hoitotuki") && t.includes("Ikäryhmä") && t.includes("Pienissä luvuissa")],
   ["kela_vammaistuet", { alue: "koko maa", kuukausi: "2019-06", sairausryhmat: true }, (t) => t.includes("Koko maa, 6/2019") && t.includes("F00-F99")],
+  // ePerusteet (Opetushallitus). Neljäs arvo = ulkoisten pyyntöjen enimmäismäärä ilman välimuistia.
+  ["hae_tutkintoja", { hakusana: "kosmetologi" }, (t) => t.includes("Hius- ja kauneudenhoitoalan perustutkinto (perustutkinto") && t.includes("Osuma: tutkintonimike Kosmetologi") && t.includes("OPH-7086-2025") && /OPH-5162-2024: siirtymäajalla 31\.7\.2030 asti/.test(t) && t.includes("uudempi peruste OPH-7086-2025") && t.includes("Lähde: Opetushallitus, ePerusteet"), 1],
+  ["hae_tutkintoja", { hakusana: "hieronnan", tyyppi: "ammattitutkinto" }, (t) => t.includes("Hieronnan ammattitutkinto (ammattitutkinto") && !t.includes("erikoisammattitutkinto (") && t.includes("Osuma: osaamisala Koirahieronnan osaamisala"), 1],
+  ["hae_tutkintoja", { hakusana: "lähihoitaja" }, (t) => t.includes("Sosiaali- ja terveysalan perustutkinto") && t.includes("OPH-7059-2025"), 1],
+  ["hae_tutkintoja", { hakusana: "sosiaali- ja terveysalan erikoisammattitutkinto", voimassaolo: "tulevat" }, (t) => t.includes("OPH-191-2026: tulossa, voimaan 1.1.2027"), 1],
+  ["hae_tutkintoja", { hakusana: "massage", kieli: "sv" }, (t) => t.includes("Specialyrkesexamen i massage") && t.includes("#/sv/ammatillinen/"), 1],
+  ["hae_tutkintoja", { hakusana: "lentokapteeni" }, (t) => t.includes("ei löytynyt")],
+  ["tutkinnon_peruste", { peruste: "OPH-7086-2025" }, (t) => t.includes("Hius- ja kauneudenhoitoalan perustutkinto (perustutkinto), peruste OPH-7086-2025") && t.includes("Kauneudenhoidon osaamisala (vähintään 125 osp)") && t.includes("- Kasvohoitokokonaisuuksien toteuttaminen, 40 osp") && t.includes("Määräys (PDF): https://eperusteet.opintopolku.fi/eperusteet-service/api/perusteet/9715351/liitteet/") && t.includes("/ammatillinen/9715351/tiedot"), 3],
+  ["tutkinnon_peruste", { peruste: "Sosiaali- ja terveysalan perustutkinto", osaamisala: "ikääntyneiden" }, (t) => t.includes("peruste OPH-7059-2025") && t.includes("Tutkintonimike: Lähihoitaja") && t.includes("Pakolliset tutkinnon osat (vähintään 115 osp)") && t.includes("Rajattu pois:") && t.includes("Saman tutkinnon muut perusteet: OPH-4417-2023") && t.includes("julkiterhikki.lvv.fi"), 3],
+  ["tutkinnon_peruste", { peruste: "OPH-1934-2018" }, (t) => t.includes("siirtymäajalla 31.7.2028 asti") && t.includes("- Tuki- ja liikuntaelinongelmaisen potilaan terveyden ja toimintakyvyn edistäminen, 70 osp")],
+  ["tutkinnon_peruste", { peruste: "OPH-9999-2025" }, (t) => t.includes("ei löytynyt")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025" }, (t) => t.includes("- Kasvohoitokokonaisuuksien toteuttaminen, 40 osp: pakollinen (Kauneudenhoidon osaamisala)") && t.includes("Yhteiset tutkinnon osat:"), 2],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "kasvohoito" }, (t) => t.includes("(tutkinnon osan koodi 107623), 40 osp") && t.includes("Kasvohoitokokonaisuuksien toteuttaminen:") && t.includes("- tekee ihoanalyysin") && t.includes("AMMATTITAIDON OSOITTAMISTAVAT") && t.includes("pyydä arviointi: true") && !t.includes("Kiitettävä 5") && t.includes("/tutkinnonosat/9715291"), 3],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "kasvohoito", hakusana: "hieronta", arviointi: true }, (t) => t.includes("Hakusana \"hieronta\": 1 vaatimus") && t.includes("klassisen hieronnan ottein") && !t.includes("tekee ihoanalyysin")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "Kasvohoitokokonaisuuksien toteuttaminen", arviointi: true }, (t) => t.includes("ARVIOINTI") && t.includes("Tyydyttävä 1:") && t.includes("Kiitettävä 5:")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "kasvohoito", kieli: "sv" }, (t) => t.includes("Att genomföra helheter för ansiktsbehandling") && t.includes("Den studerande") && t.includes("#/sv/ammatillinen/")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-1934-2018", tutkinnon_osa: "Tuki- ja liikuntaelinongelmaisen", arviointi: true }, (t) => t.includes("Opiskelija osaa") && t.includes("- arvioida erilaisten tuki- ja liikuntaelinongelmaisten") && t.includes("Hyväksytyn suorituksen kriteerit:") && t.includes("julkiterhikki.lvv.fi"), 3],
+  ["tutkinnon_osaaminen", { peruste: "OPH-5085-2021", tutkinnon_osa: "ensihoidossa" }, (t) => t.includes("Ensihoidossa toimiminen (tutkinnon osan koodi 106225), 40 osp") && t.includes("pakollinen (Perustason ensihoidon osaamisala)") && t.includes("Opiskelija osaa")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "Viestintä- ja vuorovaikutusosaaminen", hakusana: "ruotsi" }, (t) => t.includes("OSA-ALUE: Viestintä ja vuorovaikutus toisella kotimaisella kielellä, ruotsi (VVTK26)") && t.includes("Pakolliset osaamistavoitteet, 1 osp:") && t.includes("Asema tutkinnossa: pakollinen")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "107623" }, (t) => t.includes("Kasvohoitokokonaisuuksien toteuttaminen (tutkinnon osan koodi 107623)"), 4],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "999999" }, (t) => t.includes("koodia 999999 ei ole perusteessa")],
+  ["tutkinnon_osaaminen", { peruste: "OPH-7086-2025", tutkinnon_osa: "lentokoneen huolto" }, (t) => t.includes("ei löytynyt perusteesta OPH-7086-2025") && t.includes("- Ihokarvojen poistaminen")],
 ];
-for (const [name, args, pred] of cases) {
+for (const [name, args, pred, maxFetch] of cases) {
   const t0 = Date.now();
+  fetchCount = 0;
   const r = await tool(name, args);
-  const ok = pred(r.text);
-  check(ok, `${name} ${JSON.stringify(args)} (${Date.now() - t0} ms)`);
+  const ok = pred(r.text) && (maxFetch === undefined || fetchCount <= maxFetch);
+  check(ok, `${name} ${JSON.stringify(args)} (${Date.now() - t0} ms${maxFetch !== undefined ? `, pyyntöjä ${fetchCount}/${maxFetch}` : ""})`);
   if (show || !ok) console.log(r.text.slice(0, 3000), "\n------");
 }

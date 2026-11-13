@@ -1,7 +1,7 @@
 // HTTP-apu: välimuisti (Cloudflare Cache API), uudelleenyritykset ja
 // alipyyntöbudjetti (Workersin ilmaistasolla enintään 50 ulkoista pyyntöä / kutsu).
 
-const USER_AGENT = "aluetieto-mcp/1.10 (Claude-liitin; Cloudflare Worker)";
+const USER_AGENT = "aluetieto-mcp/1.11 (Claude-liitin; Cloudflare Worker)";
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 
