@@ -32,7 +32,9 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.1" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.2" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
+// Claude-asiakkaat katkaisevat palvelinohjeen noin 4 096 merkin kohdalta.
+check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä (${init.result.instructions.length})`);
 const list = await rpc("tools/list", {});
 check(list.result?.tools?.length === 30 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (30, readOnlyHint)");
 check(list.result.tools.filter((t) => ["tulevat_paivat", "koululomat"].includes(t.name)).every((t) => t.annotations.openWorldHint === false), "kalenterityökalut: openWorldHint false");
