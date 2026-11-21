@@ -32,7 +32,7 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.2" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.3" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
 // Claude-asiakkaat katkaisevat palvelinohjeen noin 4 096 merkin kohdalta.
 check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä (${init.result.instructions.length})`);
 const list = await rpc("tools/list", {});
@@ -227,4 +227,40 @@ for (const [name, args, pred, maxFetch] of cases) {
   const ok = pred(r.text) && (maxFetch === undefined || fetchCount <= maxFetch);
   check(ok, `${name} ${JSON.stringify(args)} (${Date.now() - t0} ms${maxFetch !== undefined ? `, pyyntöjä ${fetchCount}/${maxFetch}` : ""})`);
   if (show || !ok) console.log(r.text.slice(0, 3000), "\n------");
+}
+
+// Virhetekstit (22.11.2026): odottamattoman poikkeuksen teksti ei näy vastauksessa eikä lokissa;
+// tarkoitukselliset virheet (syötteen muoto, lähteen tila, NaytettavaVirhe) näkyvät yhä.
+// Lopussa, koska vale-fetch voisi jättää isolaatin muistiin tyhjiä tuloksia muille testeille.
+{
+  const SALAISUUS = "SISAINEN-salaisuus-xyz";
+  const orig = globalThis.fetch;
+  const origErr = console.error;
+  const loki = [];
+  console.error = (...a) => loki.push(a.map(String).join(" "));
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      text: async () => { throw new Error(SALAISUUS); },
+      json: async () => { throw new Error(SALAISUUS); },
+      arrayBuffer: async () => { throw new Error(SALAISUUS); },
+    });
+    const r = await tool("yrityksen_tiedot", { y_tunnus: "0112038-9" });
+    check(r.isError && !r.text.includes(SALAISUUS) && r.text.includes("Haku epäonnistui"), "virheteksti: odottamaton poikkeus piilotetaan vastauksesta");
+    check(loki.length > 0 && !loki.some((l) => l.includes(SALAISUUS)) && loki.some((l) => l.includes("yrityksen_tiedot") && l.includes("Error")), "virheteksti: lokiin vain työkalu ja virheen nimi");
+    globalThis.fetch = async () => new Response("", { status: 403 });
+    const f = await tool("yrityksen_tiedot", { y_tunnus: "0112038-9" });
+    check(f.isError && f.text.includes("Tietolähteen haku epäonnistui: Lähde vastasi 403"), "virheteksti: lähteen tila (403) näkyy yhä");
+    const meta = { title: "Koe", variables: [{ code: "Vuosi", text: "Vuosi", values: ["2024"], valueTexts: ["2024"], time: true }] };
+    globalThis.fetch = async () => new Response(JSON.stringify(meta), { status: 200 });
+    const n = await tool("tilasto", { taulukko: "vaerak/koe1", valinnat: { Tuntematon: "1" } });
+    check(n.isError && n.text.includes('Muuttujaa "Tuntematon" ei ole taulukossa'), "virheteksti: NaytettavaVirhe (StatFinin valintavirhe) näkyy yhä");
+  } finally {
+    globalThis.fetch = orig;
+    console.error = origErr;
+  }
+  const u = await tool("yrityksen_tiedot", { y_tunnus: "abc" });
+  check(u.isError && u.text.includes("Anna y-tunnus muodossa"), "virheteksti: syötteen muotovirhe näkyy yhä");
 }

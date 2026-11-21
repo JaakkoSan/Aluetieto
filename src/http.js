@@ -16,6 +16,14 @@ export class HttpError extends Error {
 
 export class BudgetError extends Error {}
 
+/** Virhe, jonka teksti saa näkyä käyttäjälle (esim. lähteen tila). Muiden odottamattomien poikkeusten teksti piilotetaan. */
+export class NaytettavaVirhe extends Error {
+  constructor(viesti) {
+    super(viesti);
+    this.name = "NaytettavaVirhe";
+  }
+}
+
 /** Pyyntökohtainen budjetti ulkoisille hauille. Välimuistiosumat eivät kuluta budjettia. */
 export function newBudget(max = 45) {
   return { left: max };

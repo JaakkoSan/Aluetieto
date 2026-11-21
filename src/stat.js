@@ -1,7 +1,7 @@
 // Tilastokeskuksen PxWeb-rajapinta: Paavo (postinumeroalueittainen avoin tieto)
 // ja yritysten toimipaikat maakunnittain ja toimialoittain.
 
-import { fetchJson } from "./http.js";
+import { fetchJson, NaytettavaVirhe } from "./http.js";
 
 const PX = "https://pxdata.stat.fi/PxWeb/api/v1/fi";
 // Tilastokeskus poisti uusin-kansion marraskuussa 2026; aineistot ovat julkaisuvuoden kansioissa.
@@ -57,7 +57,7 @@ async function tableMeta(id, budget) {
 
 async function buildTableMeta(id, budget) {
   const meta = await fetchJson(`${PAAVO}/${id}`, { ttl: DAY, budget });
-  if (!meta) throw new Error(`Paavon taulukkoa ${id} ei löytynyt.`);
+  if (!meta) throw new NaytettavaVirhe(`Paavon taulukkoa ${id} ei löytynyt.`);
   const pVar = meta.variables.find((v) => /postinumero/i.test(v.text));
   const yVar = meta.variables.find((v) => v.code === "timeperiod_y" || /vuosi/i.test(v.text));
   const cVar = meta.variables.find((v) => v.code === "contentscode");
@@ -202,7 +202,7 @@ async function toimipaikatMeta(budget) {
 
 async function buildToimipaikatMeta(budget) {
   const meta = await fetchJson(TOIMIPAIKAT, { ttl: DAY, budget });
-  if (!meta) throw new Error("Toimipaikkataulukkoa ei löytynyt.");
+  if (!meta) throw new NaytettavaVirhe("Toimipaikkataulukkoa ei löytynyt.");
   const v = (pred) => meta.variables.find(pred);
   const area = v((x) => /maakunta/i.test(x.text));
   const ind = v((x) => /toimiala/i.test(x.text));
