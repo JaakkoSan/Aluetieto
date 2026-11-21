@@ -6,7 +6,7 @@
 //    maksuunpannut verot, veronpalautus ja jäännösvero yhteisöittäin, vuosittaiset CSV-tiedostot
 //    (https://www.vero.fi/avoindata) ladataan ajastetusti D1-kantaan (EU-lainkäyttöalue).
 
-import { fetchJson, HttpError } from "./http.js";
+import { fetchJson, HttpError, NaytettavaVirhe } from "./http.js";
 import { MC_LABELS } from "./sbrLabels.js";
 
 const XBRL = "https://avoindata.prh.fi/opendata-xbrl-api/v3";
@@ -156,7 +156,7 @@ async function ensureVeroSchema(db) {
 /** Verohallinnon avoimen datan sivun CSV-linkit: [{ url, kind: "vuosi" | "muutos" }]. */
 async function veroLinks() {
   const res = await fetch(VERO_PAGE, { headers: { "User-Agent": USER_AGENT, Accept: "text/html" } });
-  if (!res.ok) throw new Error(`vero.fi ${res.status}`);
+  if (!res.ok) throw new NaytettavaVirhe(`vero.fi ${res.status}`);
   const html = await res.text();
   const out = [];
   const seen = new Set();
@@ -214,7 +214,7 @@ const BATCH_STMTS = 10;
  */
 async function loadVeroFile(db, url, kind) {
   const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-  if (!res.ok || !res.body) throw new Error(`vero.fi ${res.status} ${url}`);
+  if (!res.ok || !res.body) throw new NaytettavaVirhe(`vero.fi ${res.status} ${url}`);
   const withChange = kind === "muutos";
   const table = withChange ? "vero_muutos" : "vero";
   const head = withChange
@@ -281,7 +281,7 @@ async function loadVeroFile(db, url, kind) {
   if (carry && !first) await handle(carry);
   await flushRows();
   await runPending(true);
-  if (!count) throw new Error(`tiedostossa ei rivejä: ${url}`);
+  if (!count) throw new NaytettavaVirhe(`tiedostossa ei rivejä: ${url}`);
   const ys = [...years];
   await db
     .prepare("UPDATE vero_files SET status = 'ok', vuosi = ?, rows = ?, loaded_at = ? WHERE url = ?")

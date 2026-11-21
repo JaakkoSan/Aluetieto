@@ -1,6 +1,6 @@
 // MCP-työkalut: määrittelyt ja toteutukset.
 
-import { BudgetError, HttpError, newBudget } from "./http.js";
+import { BudgetError, HttpError, NaytettavaVirhe, newBudget } from "./http.js";
 import {
   searchCompanies,
   searchAll,
@@ -535,6 +535,11 @@ for (const t of TOOLS) {
 // ---------- Apufunktiot ----------
 
 class UserError extends Error {}
+
+// Odottamattoman poikkeuksen tilalla näytettävä teksti (sama kuin yhteisessä rungossa).
+const YLEINEN_VIRHE = "Haku epäonnistui. Yritä hetken päästä uudelleen.";
+// Osahaun virheen selitys tulosteessa: vain tarkoituksella näytettävät virheet tekstineen.
+const osaVirhe = (e) => (e instanceof UserError || e instanceof HttpError || e instanceof BudgetError || e instanceof NaytettavaVirhe ? e.message : "haku epäonnistui");
 
 const nf = new Intl.NumberFormat("fi-FI");
 const fmt = (n) => (n === null || n === undefined ? "–" : nf.format(Math.round(n)));
@@ -1282,7 +1287,8 @@ async function tilasto(args) {
   try {
     built = buildQuery(meta, args.valinnat ?? {});
   } catch (e) {
-    throw new UserError(e.message);
+    if (e instanceof NaytettavaVirhe) throw new UserError(e.message);
+    throw e;
   }
   const ds = await runQuery(id, built.query, budget);
   const { dims, rows } = rowsOf(ds);
@@ -2467,7 +2473,7 @@ async function avoimetTyopaikat(args) {
   // Työnantajan sektori (12uz): vain kahden numeron ammattiluokat.
   out.push("");
   if (sectors?.error) {
-    out.push(`Työnantajan sektori: tietoa ei saatu (${sectors.error.message}).`);
+    out.push(`Työnantajan sektori: tietoa ei saatu (${osaVirhe(sectors.error)}).`);
   } else {
     const year = sectors.codes("timeperiod_y").at(-1);
     out.push(`TYÖNANTAJAN SEKTORI, tammi-kesäkuu ${year}, ${region.name} (taulukko tyonv/12uz; sektoritieto on vain kahden numeron ammattiluokille, ei yksittäiselle ammattiryhmälle):`);
@@ -2492,7 +2498,7 @@ async function avoimetTyopaikat(args) {
   if (region.kunta) {
     out.push("");
     if (!kunta || kunta.error) {
-      out.push(`Kunnan ${region.kunta.name} avoimia työpaikkoja ei saatu${kunta?.error ? ` (${kunta.error.message})` : ""}.`);
+      out.push(`Kunnan ${region.kunta.name} avoimia työpaikkoja ei saatu${kunta?.error ? ` (${osaVirhe(kunta.error)})` : ""}.`);
     } else {
       const km = kunta.codes("timeperiod_m");
       const kl = km.at(-1);
@@ -2565,7 +2571,14 @@ export async function callTool(name, args = {}, env = {}) {
           ? "Haku olisi vaatinut liian monta pyyntöä kerralla. Rajaa aluetta tai toimialaa."
           : e instanceof HttpError
             ? `Tietolähteen haku epäonnistui: ${e.message}. Yritä hetken päästä uudelleen.`
-            : `Odottamaton virhe: ${e?.message ?? e}`;
+            : e instanceof NaytettavaVirhe
+              ? e.message
+              : null;
+    if (msg === null) {
+      // Odottamaton poikkeus: sisäistä tekstiä ei näytetä eikä kirjata (voi sisältää rajapintojen tai kannan tietoja).
+      console.error("tyokalu:", name, e?.name ?? "virhe");
+      return { isError: true, content: [{ type: "text", text: YLEINEN_VIRHE }] };
+    }
     return { isError: true, content: [{ type: "text", text: msg }] };
   }
 }

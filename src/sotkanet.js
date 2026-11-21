@@ -5,6 +5,8 @@
 // ja Clauden työkalut lukevat vain D1:stä. Yksi ajo hakee joko yhden indikaattorin
 // metatiedot tai yhden vuoden dataa, ja dataa haetaan uudelleen vain, jos THL on päivittänyt sitä.
 
+import { NaytettavaVirhe } from "./http.js";
+
 const API = "https://sotkanet.fi/rest/1.1";
 const USER_AGENT = "aluetieto-mcp/1.1 (Claude-liitin; viikoittainen paivitys)";
 const RECHECK_DAYS = 7;
@@ -47,7 +49,7 @@ const SCHEMA = [
 
 async function getJson(url) {
   const res = await fetch(url, { headers: { "User-Agent": USER_AGENT, Accept: "application/json" } });
-  if (!res.ok) throw new Error(`Sotkanet ${res.status}: ${url}`);
+  if (!res.ok) throw new NaytettavaVirhe(`Sotkanet ${res.status}: ${url}`);
   return res.json();
 }
 

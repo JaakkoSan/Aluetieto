@@ -3,7 +3,7 @@
 // kysely: POST samaan osoitteeseen (json-stat2). Rajapinta rajoittaa pyyntöjen määrää
 // (n. 10 pyyntöä / 10 s / IP), joten vastaukset välimuistitetaan.
 
-import { fetchJson, HttpError } from "./http.js";
+import { fetchJson, HttpError, NaytettavaVirhe } from "./http.js";
 
 const BASE = "https://pxdata.stat.fi/PxWeb/api/v1/fi/StatFin";
 export const STATFIN_SOURCE = "Lähde: Tilastokeskus, StatFin (CC BY 4.0)";
@@ -61,7 +61,7 @@ export function buildQuery(meta, selections = {}) {
   const sel = new Map();
   for (const [k, raw] of Object.entries(selections ?? {})) {
     const v = meta.variables.find((x) => fold(x.code) === fold(k) || fold(x.text) === fold(k));
-    if (!v) throw new Error(`Muuttujaa "${k}" ei ole taulukossa. Muuttujat: ${meta.variables.map((x) => `${x.code} (${x.text})`).join(", ")}.`);
+    if (!v) throw new NaytettavaVirhe(`Muuttujaa "${k}" ei ole taulukossa. Muuttujat: ${meta.variables.map((x) => `${x.code} (${x.text})`).join(", ")}.`);
     sel.set(v.code, raw);
   }
   const chosen = [];
@@ -80,7 +80,7 @@ export function buildQuery(meta, selections = {}) {
           const i = v.values.findIndex((c) => fold(c) === fold(s));
           const j = i >= 0 ? i : v.texts.findIndex((t) => fold(t) === fold(s));
           const k = j >= 0 ? j : v.texts.findIndex((t) => fold(t).includes(fold(s)));
-          if (k < 0) throw new Error(`Muuttujalla ${v.code} (${v.text}) ei ole arvoa "${s}". Katso arvot tilaston_rakenne-työkalulla.`);
+          if (k < 0) throw new NaytettavaVirhe(`Muuttujalla ${v.code} (${v.text}) ei ole arvoa "${s}". Katso arvot tilaston_rakenne-työkalulla.`);
           codes.push(v.values[k]);
         }
       }
@@ -97,7 +97,7 @@ export function buildQuery(meta, selections = {}) {
     chosen.push({ v, codes });
   }
   const cells = chosen.reduce((a, c) => a * c.codes.length, 1);
-  if (cells > MAX_CELLS) throw new Error(`Kysely tuottaisi ${cells} solua (enintään ${MAX_CELLS}). Rajaa valintoja.`);
+  if (cells > MAX_CELLS) throw new NaytettavaVirhe(`Kysely tuottaisi ${cells} solua (enintään ${MAX_CELLS}). Rajaa valintoja.`);
   return {
     query: { query: chosen.map(({ v, codes }) => ({ code: v.code, selection: { filter: "item", values: codes } })), response: { format: "json-stat2" } },
     chosen,

@@ -3,8 +3,13 @@
 import { TOOLS, callTool } from "./tools.js";
 import { refreshStep } from "./sotkanet.js";
 import { veroStep } from "./yritystalous.js";
+import { HttpError, NaytettavaVirhe } from "./http.js";
 
-const SERVER_INFO = { name: "aluetieto", version: "1.14.2" };
+// Ajastetun päivityksen lokiin: tarkoituksella muotoillun virheen teksti (lähteen tila), muista vain virheen nimi,
+// koska sisäinen teksti voi sisältää kannan tai rajapintojen tietoja.
+const lokiVirhe = (e) => (e instanceof HttpError || e instanceof NaytettavaVirhe ? e.message : (e?.name ?? "virhe"));
+
+const SERVER_INFO = { name: "aluetieto", version: "1.14.3" };
 const SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS = `Tämä liitin hakee suomalaisia yritys-, väestö-, alue- ja tilastotietoja avoimista lähteistä: PRH (YTJ, kaupparekisteri, digitaalinen tilinpäätös), Verohallinto, Tilastokeskus (Paavo, StatFin, toimipaikkatilasto, hintaindeksit), THL Sotkanet, EKP, Suomi.fi-palvelutietovaranto, Maanmittauslaitos, Kela, Opetushallitus (ePerusteet) sekä käsin ylläpidetty markkinointikalenteri.
@@ -34,10 +39,10 @@ export default {
     execCtx.waitUntil(
       refreshStep(env.DB)
         .then((msg) => console.log(`sotkanet: ${msg}`))
-        .catch((e) => console.error(`sotkanet: virhe ${e?.message ?? e}`))
+        .catch((e) => console.error(`sotkanet: virhe ${lokiVirhe(e)}`))
         .then(() => veroStep(env.DB))
         .then((msg) => console.log(`vero: ${msg}`))
-        .catch((e) => console.error(`vero: virhe ${e?.message ?? e}`)),
+        .catch((e) => console.error(`vero: virhe ${lokiVirhe(e)}`)),
     );
   },
 
