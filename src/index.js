@@ -1,7 +1,7 @@
 // Aluetieto MCP -palvelin Cloudflare Workersissa (Streamable HTTP, tilaton, JSON-vastaukset).
 //
 // Runko (polun tarkistus, Origin, protokolla, JSON-RPC, käyttörajojen vastaus) on yhteisessä mcp-runko.js:ssä
-// (kopio mcp-runko-reposta, ei muokata tässä repossa). Kuusi työkalua on rungon tyokalu()-muodossa (src/tyokalut.js:
+// (kopio yhteisestä rungosta, ei muokata tässä repossa). Kuusi työkalua on rungon tyokalu()-muodossa (src/tyokalut.js:
 // rakenteinen tulos ja virhekoodit), muut 24 src/tools.js:ssä (callTool, omat virheluokat). Ajastetut eräpäivitykset
 // alla (scheduled).
 
