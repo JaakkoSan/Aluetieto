@@ -70,7 +70,7 @@ THL:n ohjeen mukaan Sotkanetin REST-rajapinta on tarkoitettu tietojen noutamisee
 
 ## Rakenteinen tulos
 
-Kuusi työkalua antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent`, kuvattu työkalun `outputSchema`ssa), jotta tuloksia voi käsitellä myös koodina: `etsi_toimiala`, `hae_yrityksia`, `alueen_vaesto`, `aluetarkistus`, `hae_tilastoja` ja `tilasto`. Tekstituloste on sama kuin ennen. Muut työkalut antavat vain tekstin.
+13 työkalua antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent`, kuvattu työkalun `outputSchema`ssa), jotta tuloksia voi käsitellä myös koodina: `etsi_toimiala`, `hae_yrityksia`, `yrityksen_tiedot`, `alueen_vaesto`, `aluetarkistus`, `hae_tilastoja`, `tilasto`, `hintaindeksi`, `indeksitarkistus`, `korot`, `hae_julkisia_palveluja`, `tulevat_paivat` ja `koululomat`. Tekstituloste on sama kuin ennen. Muut työkalut antavat vain tekstin.
 
 | Työkalu | Rakenteisen tuloksen kentät |
 |---|---|
@@ -80,11 +80,19 @@ Kuusi työkalua antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent`
 | `aluetarkistus` | `toimiala`, `alue`, `kohderyhma`, `vuosi`, `postinumeroalueet` (`yrityksia`, `vaesto`, `asukasta_per_yritys`), `yhteensa`, `tuntemattomat`, `osin_laskematta`, `kattavuus`, `yritykset` (enintään 100; tekstissä kaikki) ja `yritykset_rajattu`, `lahteet` |
 | `hae_tilastoja` | `hakusana`, `yhteensa`, `sivu`, `sivuja`, `seuraava`, `sivun_koko`, `taulukot` (`tunnus`, `otsikko`, `paivitetty`, `linkki`) |
 | `tilasto` | `taulukko`, `otsikko`, `paivitetty`, `aika` (aikamuuttuja ja valitut vuodet tai kuukaudet), `rajaus`, `oletusvalinnat`, `yksikot`, `sarakkeet`, `soluja` (kyselyn rivit, enintään 3 000), `sivu`, `sivuja`, `seuraava`, `sivun_koko`, `rivit_alkaen`, `rivit` (`luokat`, `arvo`, `tila`; tämän sivun rivit), `huomautukset` |
+| `yrityksen_tiedot` | `y_tunnus`, `loytyi` (`false`, jos yritystä ei ole avoimessa datassa), `nimi`, `tila`, `toimiva`, `tilanteet`, `yritysmuoto`, `toimiala`, `osoite`, `postinumero`, `rekisteroity`, `muut_nimet`, `rekisterit` (`rekisteri`, `alkaen`, `paattyy`), `paivitetty`, `linkki`, `kattavuus` |
+| `hintaindeksi` | `indeksi` (`tunnus`, `nimi`, `sarja`, `perusvuosi`), `alkaen`, `paattyen`, `viimeisin` (VVVV-KK), `vuosimuutos_peruste` (`virallinen` tai `laskettu`), `kuukaudet` (`kuukausi`, `pisteluku`, `vuosimuutos`; enintään 240), `paivitetty` |
+| `indeksitarkistus` | `indeksi`, `vuosikeskiarvot`, `lahtokohta` ja `tarkistus` (`ajankohta`, `pisteluku`; tarkistuksessa myös `viimeisin_julkaistu`), `muutos_prosenttia`, `kerroin`, `summa` (`alkuperainen`, `tarkistettu`, `muutos` tai `null`) |
+| `korot` | `paiva`, `viitekorko_ennen_2009`, `viitekorko` (kausi, `korko`, EKP:n perusrahoituskorko, `viivastyskorko`, `viivastyskorko_kaupallinen`), `ohjauskorot` (`tunnus`, `nimi`, `korko`, `alkaen`), `historia` (vain `historia: true`; enintään 40 kautta) |
+| `hae_julkisia_palveluja` | `alue`, `hakusana`, `koko_maa`, `yhteensa`, `rajattu`, `palvelut` (`tunniste`, `nimi`; enintään 200 kuten tekstissä) |
+| `tulevat_paivat` | `alkaen`, `loppuu`, `luokat`, `ala`, `kunta`, `kunta_ei_taulukossa`, `kunnat_taulukossa`, `ennakko_paivia`, `maara`, `paivat` (`pvm`, `nimi`, `luokat`, `saanto`, `asema`, `tarjouksiin`, `kampanja_alkaa`, `aikavalin_jalkeen`, `huom`, `lahde`, `lisalahde`), `tarkistettu` |
+| `koululomat` | `kunta`, `tila` (`loytyi`, `kunta_ei_taulukossa` tai `lukuvuosi_ei_taulukossa`), `lukuvuosi`, `koulu_paattyy_saannon_mukaan`, `saannot`, `kunnat_taulukossa`, `loma_ajat` (`alkaa`, `syysloma`, `joululoma`, `talviloma`, `paattyy`), `tarkistettu`, `lisalahde`, `lahteet` |
 
 - `tilasto` sivuttaa tekstin ja rakenteen samoin (parametri `sivu`): sivulla enintään 1 000 riviä, ja vähemmän, jos rivit ovat niin pitkiä, ettei sivu muuten mahtuisi tekstin 50 000 merkkiin. Kun sivuja on useampi, teksti kertoo rivit ja seuraavan sivun.
 - Jokaisessa tuloksessa on `lahde` (`nimi` ja `linkki`). YTJ-tuloksissa `kattavuus` kertoo saman varauksen kuin teksti: vain kaupparekisteriin merkityt yhteisöt, toiminimet puuttuvat.
 - Virhe on rakenteinen: `{ "virhe": { "koodi", "viesti", "lahteen_koodi"? } }`, koodi `syote` (syötteen virhe), `ei_loydy` (taulukkoa tai tietoa ei ole), `raja` (liian monta hakua kerralla), `lahde` (lähteen virhe, `lahteen_koodi` on HTTP-tila) tai `yleinen` (odottamaton virhe; sisäistä tekstiä ei näytetä).
-- Kaikki kuusi ovat vain lukevia (oikeus `luku`). Määrittelyt ovat tiedostossa `src/tyokalut.js` (yhteisen rungon `tyokalu()`), logiikka `src/tools.js`:n funktioissa `<nimi>Tulos` (haku ja rakenne) ja `<nimi>Teksti` (teksti).
+- Kaikki 13 ovat vain lukevia (oikeus `luku`). Määrittelyt ovat tiedostossa `src/tyokalut.js` (yhteisen rungon `tyokalu()`), logiikka `src/tools.js`:n funktioissa `<nimi>Tulos` (haku ja rakenne) ja `<nimi>Teksti` (teksti).
+- Päivät ovat muodossa VVVV-KK-PP ja kuukaudet VVVV-KK; luvut ovat pyöristämättömiä lähteen lukuja (indeksitarkistuksen `kerroin` 6 ja `muutos_prosenttia` 4 desimaalia, summat 2 desimaalia).
 - Savutesti ajaa palvelimen rungon testitilassa (`tarkistaTulokset`): rakenteinen tulos tarkistetaan `outputSchema`a vasten jokaisessa kutsussa.
 
 ## Käyttörajoitus ja merkinnät

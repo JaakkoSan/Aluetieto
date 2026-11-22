@@ -1,8 +1,8 @@
 // Aluetieto MCP -palvelin Cloudflare Workersissa (Streamable HTTP, tilaton, JSON-vastaukset).
 //
 // Runko (polun tarkistus, Origin, protokolla, JSON-RPC, käyttörajojen vastaus) on yhteisessä mcp-runko.js:ssä
-// (kopio yhteisestä rungosta, ei muokata tässä repossa). Kuusi työkalua on rungon tyokalu()-muodossa (src/tyokalut.js:
-// rakenteinen tulos ja virhekoodit), muut 24 src/tools.js:ssä (callTool, omat virheluokat). Ajastetut eräpäivitykset
+// (kopio yhteisestä rungosta, ei muokata tässä repossa). 13 työkalua on rungon tyokalu()-muodossa (src/tyokalut.js:
+// rakenteinen tulos ja virhekoodit), muut 17 src/tools.js:ssä (callTool, omat virheluokat). Ajastetut eräpäivitykset
 // alla (scheduled).
 
 import { TOOLS, callTool } from "./tools.js";
@@ -61,7 +61,7 @@ export function luoAluetieto({ tarkistaTulokset = false, varoita } = {}) {
     tools: TOOLS,
     // callTool käsittelee liittimen omat virheluokat (UserError, BudgetError, HttpError, NaytettavaVirhe).
     callTool: (nimi, args, env) => callTool(nimi, args, env),
-    // Koodiajo-valmius: etsi_toimiala, hae_yrityksia, alueen_vaesto, aluetarkistus, hae_tilastoja ja tilasto (oikeus luku).
+    // Koodiajo-valmius: 13 lukevaa työkalua (oikeus luku), ks. src/tyokalut.js.
     tyokalut: TYOKALUT,
     // Julkinen liitin: /mcp ilman salaisuutta. Jos MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> (ks. lisareitit).
     polku: { julkinen: true },

@@ -50,12 +50,15 @@ check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä 
 const list = await rpc("tools/list", {});
 check(list.result?.tools?.length === 30 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (30, readOnlyHint)");
 check(list.result.tools.filter((t) => ["tulevat_paivat", "koululomat"].includes(t.name)).every((t) => t.annotations.openWorldHint === false), "kalenterityökalut: openWorldHint false");
-// Koodiajo-valmius (1.16.0): kuusi työkalua rakenteisina (outputSchema), muut ilman.
-const RAKENTEISET = ["etsi_toimiala", "hae_yrityksia", "alueen_vaesto", "aluetarkistus", "hae_tilastoja", "tilasto"];
+// Koodiajo-valmius (1.16.0 kuusi, 1.17.0 seitsemän lisää): 13 työkalua rakenteisina (outputSchema), muut ilman.
+const RAKENTEISET = [
+  "etsi_toimiala", "hae_yrityksia", "alueen_vaesto", "aluetarkistus", "hae_tilastoja", "tilasto",
+  "yrityksen_tiedot", "hintaindeksi", "indeksitarkistus", "korot", "hae_julkisia_palveluja", "tulevat_paivat", "koululomat",
+];
 check(
   list.result.tools.filter((t) => t.outputSchema).map((t) => t.name).sort().join(",") === [...RAKENTEISET].sort().join(",") &&
     list.result.tools.filter((t) => RAKENTEISET.includes(t.name)).every((t) => t.annotations.readOnlyHint === true && t.annotations.destructiveHint === false && t.title),
-  "tools/list: kuusi rakenteista työkalua (outputSchema, luku)",
+  "tools/list: 13 rakenteista työkalua (outputSchema, luku)",
 );
 check(varoitukset.length === 0, `rungon testitilan varoitukset: ${varoitukset.length ? varoitukset.join("; ") : "ei"}`);
 
@@ -308,6 +311,62 @@ for (const [name, args, pred, maxFetch] of cases) {
   const v2 = await tool("tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "*", Ikä: "*", Sukupuoli: "*" } });
   const v3 = await tool("etsi_toimiala", { hakusana: "a" });
   check(v1.sc?.virhe?.koodi === "syote" && v2.sc?.virhe?.koodi === "syote" && v2.text.includes("enintään 3000") && v3.sc?.virhe?.koodi === "syote" && v3.sc.virhe.viesti === v3.text, "rakenne: virhekoodit (syote)");
+}
+
+// Rakenteinen tulos, toinen erä (1.17.0): yrityksen_tiedot, hintaindeksi, indeksitarkistus, korot, hae_julkisia_palveluja,
+// tulevat_paivat ja koululomat.
+{
+  const y1 = await tool("yrityksen_tiedot", { y_tunnus: "0112038-9" });
+  check(
+    !y1.isError && y1.sc?.loytyi === true && y1.sc.y_tunnus === "0112038-9" && y1.text.startsWith(`${y1.sc.nimi} (0112038-9)`) && /^\d{4}-\d{2}-\d{2}/.test(y1.sc.rekisteroity) &&
+      y1.sc.rekisterit.length > 0 && y1.sc.rekisterit.every((r) => typeof r.rekisteri === "string") && y1.sc.linkki.includes("0112038-9") && y1.sc.kattavuus?.toiminimet_puuttuvat === true,
+    "rakenne: yrityksen_tiedot (loytyi, rekisterit, linkki)",
+  );
+  const y2 = await tool("yrityksen_tiedot", { y_tunnus: "1234567-8" });
+  check(!y2.isError && y2.sc?.loytyi === false && !("nimi" in y2.sc) && y2.text.includes("ei löytynyt"), "rakenne: yrityksen_tiedot ei löytynyt (loytyi false, ei virhe)");
+  const h1 = await tool("hintaindeksi", { alkaen: "2024-01", paattyen: "2024-12" });
+  check(
+    !h1.isError && h1.sc?.indeksi?.tunnus === "khi" && h1.sc.alkaen === "2024-01" && h1.sc.paattyen === "2024-12" && h1.sc.kuukaudet.length === 12 &&
+      h1.sc.vuosimuutos_peruste === "virallinen" && h1.sc.kuukaudet.every((k) => /^\d{4}-\d{2}$/.test(k.kuukausi) && k.pisteluku > 0 && typeof k.vuosimuutos === "number") && h1.sc.lahde.linkki.includes("stat.fi"),
+    "rakenne: hintaindeksi (kuukaudet, virallinen vuosimuutos)",
+  );
+  const i1 = await tool("indeksitarkistus", { lahtokohta: "2024-03", tarkistus: "2025-03", summa: 850 });
+  check(
+    !i1.isError && i1.sc?.lahtokohta?.ajankohta === "2024-03" && i1.sc.tarkistus.ajankohta === "2025-03" && i1.sc.tarkistus.viimeisin_julkaistu === false &&
+      Math.abs(i1.sc.kerroin - i1.sc.tarkistus.pisteluku / i1.sc.lahtokohta.pisteluku) < 1e-6 && Math.abs(i1.sc.summa.tarkistettu - 850 * i1.sc.kerroin) < 0.01,
+    "rakenne: indeksitarkistus (ajankohdat, kerroin, summa)",
+  );
+  const k1 = await tool("korot", { paiva: "2026-10-31", historia: true });
+  check(
+    !k1.isError && k1.sc?.viitekorko?.kausi_alkaa === "2026-07-01" && k1.sc.viitekorko.kausi_paattyy === "2026-12-31" && k1.sc.viitekorko.viivastyskorko === k1.sc.viitekorko.korko + 7 &&
+      k1.sc.ohjauskorot.length === 3 && k1.sc.historia.length > 30 && k1.sc.historia[0].kausi_alkaa === "2026-07-01" && k1.sc.viitekorko_ennen_2009 === false,
+    "rakenne: korot (viitekorko, ohjauskorot, historia)",
+  );
+  const k2 = await tool("korot", { paiva: "2005-03-01" });
+  check(!k2.isError && k2.sc?.viitekorko_ennen_2009 === true && k2.sc.viitekorko === null && k2.sc.historia === null, "rakenne: korot ennen 2009 (viitekorko null)");
+  const p1 = await tool("hae_julkisia_palveluja", { alue: "Kotka", hakusana: "kotihoito" });
+  check(
+    !p1.isError && p1.sc?.hakusana === "kotihoito" && p1.sc.yhteensa === p1.sc.palvelut.length && p1.sc.rajattu === false &&
+      p1.sc.palvelut.every((x) => /^[0-9a-f-]{36}$/i.test(x.tunniste) && p1.text.includes(`(${x.tunniste})`)),
+    "rakenne: hae_julkisia_palveluja (palvelut, tunnisteet)",
+  );
+  const t1 = await tool("tulevat_paivat", { alkaen: "2026-12-01", loppuu: "2026-12-31", luokat: ["pyha"], ennakko_paivia: 14 });
+  check(
+    !t1.isError && t1.sc?.alkaen === "2026-12-01" && t1.sc.loppuu === "2026-12-31" && t1.sc.maara === t1.sc.paivat.length && t1.sc.ennakko_paivia === 14 &&
+      t1.sc.paivat.some((p) => p.pvm === "2026-12-25" && p.kampanja_alkaa === "2026-12-11" && p.lahde.linkki.startsWith("https://")) && t1.sc.paivat.every((p) => p.luokat.includes("pyha")),
+    "rakenne: tulevat_paivat (päivät, kampanja, lähde)",
+  );
+  const t2 = await tool("tulevat_paivat", { alkaen: "2026-12-01", kunta: "Hamina" });
+  check(!t2.isError && t2.sc?.kunta === null && t2.sc.kunta_ei_taulukossa === "Hamina" && t2.text.includes('Kunnan "Hamina" koululomia ei ole taulukossa'), "rakenne: tulevat_paivat tuntematon kunta");
+  const l1 = await tool("koululomat", { kunta: "Kotka", lukuvuosi: "2026-2027" });
+  check(
+    !l1.isError && l1.sc?.tila === "loytyi" && l1.sc.loma_ajat.syysloma.alkaa === "2026-10-19" && l1.sc.loma_ajat.paattyy === "2027-06-05" && l1.sc.koulu_paattyy_saannon_mukaan === "2027-06-05" &&
+      l1.sc.lahde.linkki.startsWith("https://www.oph.fi/") && l1.sc.lahteet.length === 3,
+    "rakenne: koululomat Kotka (loma-ajat, lähteet)",
+  );
+  const l2 = await tool("koululomat", { kunta: "Hamina" });
+  const l3 = await tool("koululomat", { kunta: "Kotka", lukuvuosi: "2027-2028" });
+  check(!l2.isError && l2.sc?.tila === "kunta_ei_taulukossa" && l2.sc.loma_ajat === null && !l3.isError && l3.sc?.tila === "lukuvuosi_ei_taulukossa" && l3.sc.kunnan_lukuvuodet.includes("2026-2027"), "rakenne: koululomat ilman taulukon tietoa");
 }
 
 // Virhetekstit (22.11.2026): odottamattoman poikkeuksen teksti ei näy vastauksessa eikä lokissa;
