@@ -1,6 +1,7 @@
 // MCP-työkalut: määrittelyt ja toteutukset.
 
 import { BudgetError, HttpError, NaytettavaVirhe, newBudget } from "./http.js";
+import { sivuta } from "./mcp-runko.js";
 import {
   searchCompanies,
   searchAll,
@@ -1364,10 +1365,22 @@ const fmtNum = (v) => {
   return i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d ? `,${d}` : "");
 };
 
+/** tilasto: rivejä sivulla enintään (teksti ja rakenne), ja tekstirivien merkit sivulla enintään (tekstin raja 50 000). */
+export const TILASTO_RIVEJA_SIVULLA = 1000;
+const TILASTO_RIVIEN_MERKIT = 40_000;
+const tilastoRivi = (r) => `${r.luokat.join(" | ") || "Arvo"}: ${fmtNum(r.arvo)}${r.tila ? ` (${r.tila})` : ""}`;
+
 export async function tilastoTulos(args) {
   const id = asTableId(args.taulukko);
   const budget = newBudget(3);
-  const meta = await tableMeta(id, budget);
+  let meta;
+  try {
+    meta = await tableMeta(id, budget);
+  } catch (e) {
+    // StatFin vastaa tuntemattomaan alueeseen 400 (tuntemattomaan taulukkoon 404 -> null): taulukkoa ei ole.
+    if (!(e instanceof HttpError && e.status === 400)) throw e;
+    meta = null;
+  }
   if (!meta) throw new EiLoydyVirhe(`Taulukkoa ${id.area}/${id.table} ei löytynyt StatFinistä.`);
   let built;
   try {
@@ -1389,6 +1402,16 @@ export async function tilastoTulos(args) {
     if (u.length && u.length <= 10) yksikot = u.map((x) => ({ nimi: String(x.nimi), yksikko: String(x.yksikko) }));
   }
   const aikaValinta = built.chosen.find((c) => c.v.time);
+  // Teksti ja rakenne samaan rajaukseen: sivulla enintään TILASTO_RIVEJA_SIVULLA riviä, ja vähemmän, jos pisin rivi
+  // tekstinä ei muuten mahtuisi tekstin enimmäispituuteen (sivun koko on sama samalla kyselyllä, joten sivut pysyvät).
+  const rivit = rows.map((r) => ({
+    luokat: varying.map(({ i }) => r.labels[i]),
+    arvo: typeof r.value === "number" && Number.isFinite(r.value) ? r.value : null,
+    tila: r.status ? String(r.status) : null,
+  }));
+  const pisin = rivit.reduce((m, r) => Math.max(m, tilastoRivi(r).length + 1), 1);
+  const koko = Math.max(1, Math.min(TILASTO_RIVEJA_SIVULLA, Math.floor(TILASTO_RIVIEN_MERKIT / pisin)));
+  const sivu = sivuta(rivit, { sivu: args.sivu, koko, enintaan: TILASTO_RIVEJA_SIVULLA });
   const notes = ds.note ?? [];
   const clean = notes
     .map((n) => String(n).replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
@@ -1404,12 +1427,13 @@ export async function tilastoTulos(args) {
     oletusvalinnat: built.notes,
     yksikot,
     sarakkeet: varying.map(({ d }) => d.label),
-    soluja: rows.length,
-    rivit: rows.map((r) => ({
-      luokat: varying.map(({ i }) => r.labels[i]),
-      arvo: typeof r.value === "number" && Number.isFinite(r.value) ? r.value : null,
-      tila: r.status ? String(r.status) : null,
-    })),
+    soluja: rivit.length,
+    rivit: sivu.rivit,
+    sivu: sivu.sivu,
+    sivuja: sivu.sivuja,
+    seuraava: sivu.seuraava,
+    sivun_koko: koko,
+    rivit_alkaen: sivu.rivit.length ? (sivu.sivu - 1) * koko + 1 : 0,
     huomautukset: clean.slice(0, 5).map((n) => n.slice(0, 400)),
     lahde: { nimi: STATFIN_LAHDE.nimi, linkki: statfinLinkki(id) },
   };
@@ -1422,11 +1446,11 @@ export function tilastoTeksti(d) {
   if (d.oletusvalinnat.length) out.push(`Oletusvalinnat: ${d.oletusvalinnat.join("; ")}`);
   if (d.yksikot.length) out.push(`Yksiköt: ${d.yksikot.map((x) => `${x.nimi}: ${x.yksikko}`).join("; ")}`);
   out.push("");
-  if (d.sarakkeet.length) out.push(d.sarakkeet.join(" | ") + " : arvo");
-  for (const r of d.rivit) {
-    const lab = r.luokat.join(" | ");
-    out.push(`${lab || "Arvo"}: ${fmtNum(r.arvo)}${r.tila ? ` (${r.tila})` : ""}`);
+  if (d.sivuja > 1) {
+    out.push(`Rivit ${d.rivit_alkaen}–${d.rivit_alkaen + d.rivit.length - 1} / ${d.soluja} (sivu ${d.sivu}/${d.sivuja}, enintään ${d.sivun_koko} riviä sivulla).${d.seuraava ? ` Lisää: sivu ${d.seuraava}.` : ""}`, "");
   }
+  if (d.sarakkeet.length) out.push(d.sarakkeet.join(" | ") + " : arvo");
+  for (const r of d.rivit) out.push(tilastoRivi(r));
   if (d.huomautukset.length) out.push("", ...d.huomautukset.map((n) => `Huom: ${n}`));
   out.push("", `".." = tieto puuttuu tai on salassa pidettävä. ${STATFIN_SOURCE}, taulukko ${d.taulukko}.`);
   return clip(out.join("\n"));

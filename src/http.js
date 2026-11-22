@@ -117,7 +117,8 @@ export async function fetchJson(url, { method = "GET", body, ttl = 3600, budget,
     if (!RETRY_STATUS.has(res.status)) break;
     await sleep(500 * 2 ** attempt);
   }
-  throw lastErr instanceof HttpError ? lastErr : new HttpError(`Lähteeseen ei saatu yhteyttä: ${lastErr?.message ?? lastErr}`, 0);
+  // Verkkovirheen sisäistä tekstiä ei näytetä (voi sisältää osoitteita tai ympäristön tietoja).
+  throw lastErr instanceof HttpError ? lastErr : new HttpError("Lähteeseen ei saatu yhteyttä", 0);
 }
 
 function sleep(ms) {

@@ -20,6 +20,7 @@ import {
   tilastoTulos,
   tilastoTeksti,
   ALUETARKISTUS_YRITYKSET_ENINTAAN,
+  TILASTO_RIVEJA_SIVULLA,
   UserError,
   EiLoydyVirhe,
   TARGETS,
@@ -359,6 +360,8 @@ export const TYOKALUT = [
       properties: {
         taulukko: { type: "string", description: "Taulukon tunnus, esim. \"vaerak/11rc\"." },
         valinnat: { type: "object", description: "Esim. {\"Vuosi\": \"viimeiset 3\", \"Ikä\": [\"75 - 79\", \"80 - 84\"], \"Sukupuoli\": \"Naiset\"}.", additionalProperties: true },
+
+        sivu: { type: "integer", minimum: 1, description: `Rivisivu, 1 = ensimmäinen (enintään ${TILASTO_RIVEJA_SIVULLA} riviä sivulla, pitkillä riveillä vähemmän).` },
       },
       required: ["taulukko"],
     },
@@ -379,7 +382,10 @@ export const TYOKALUT = [
         oletusvalinnat: lista({ type: "string" }, "Valitsematta jätettyjen muuttujien oletusarvot."),
         yksikot: lista({ type: "object", properties: { nimi: { type: "string" }, yksikko: { type: "string" } }, required: ["nimi", "yksikko"] }, "Tietojen yksiköt (enintään 10)."),
         sarakkeet: lista({ type: "string" }, "Muuttujat, joilla on useampi arvo; rivin luokat ovat tässä järjestyksessä."),
-        soluja: kl("Rivejä (soluja) yhteensä, enintään 3 000."),
+        soluja: kl("Rivejä (soluja) kyselyssä yhteensä, enintään 3 000."),
+        ...SIVUTUS,
+        sivun_koko: kl(`Rivejä sivulla enintään (${TILASTO_RIVEJA_SIVULLA}, tai vähemmän, jos rivit ovat pitkiä; sama kuin tekstissä).`),
+        rivit_alkaen: kl("Tämän sivun ensimmäisen rivin järjestysnumero (1 = ensimmäinen; 0, jos rivejä ei ole)."),
         rivit: lista(
           {
             type: "object",
@@ -390,12 +396,12 @@ export const TYOKALUT = [
             },
             required: ["luokat", "arvo", "tila"],
           },
-          "Luvut.",
+          "Tämän sivun luvut (sama rajaus kuin tekstissä).",
         ),
         huomautukset: lista({ type: "string" }, "Taulukon huomautukset (enintään 5)."),
         lahde: LAHDE_SKEEMA,
       },
-      required: ["taulukko", "otsikko", "paivitetty", "aika", "rajaus", "oletusvalinnat", "yksikot", "sarakkeet", "soluja", "rivit", "huomautukset", "lahde"],
+      required: ["taulukko", "otsikko", "paivitetty", "aika", "rajaus", "oletusvalinnat", "yksikot", "sarakkeet", "soluja", "sivu", "sivuja", "seuraava", "sivun_koko", "rivit_alkaen", "rivit", "huomautukset", "lahde"],
     }),
     hae: tilastoTulos,
     teksti: tilastoTeksti,

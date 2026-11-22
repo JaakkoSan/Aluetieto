@@ -291,6 +291,19 @@ for (const [name, args, pred, maxFetch] of cases) {
       s6.sc.rivit.find((r) => r.luokat[0] === "75 - 79")?.arvo === 310766 && s6.sc.lahde.linkki.endsWith("/StatFin__vaerak/11rc.px/"),
     "rakenne: tilasto (aika, sarakkeet, rivit, taulukon linkki)",
   );
+  // Teksti ja rakenne samaan rajaukseen: 30 × 19 × 3 = 1 710 riviä -> kaksi sivua (enintään 1 000 riviä sivulla).
+  const isoV = { Vuosi: "viimeiset 30", Ikä: "*", Sukupuoli: "*" };
+  const s7 = await tool("tilasto", { taulukko: "vaerak/11rc", valinnat: isoV });
+  const s7b = await tool("tilasto", { taulukko: "vaerak/11rc", valinnat: isoV, sivu: 2 });
+  const rivejaTekstissa = (x) => x.text.split("\n").filter((l) => /: [\d\s,.]+( \(.*\))?$/.test(l) && !l.startsWith("Rivit ") && !l.startsWith("Päivitetty")).length;
+  check(
+    !s7.isError && s7.sc?.soluja === 1710 && s7.sc.rivit.length === 1000 && s7.sc.sivuja === 2 && s7.sc.seuraava === 2 && s7.text.includes("Rivit 1–1000 / 1710 (sivu 1/2") && s7.text.includes("Lisää: sivu 2.") &&
+      rivejaTekstissa(s7) === 1000 && !s7.text.includes("katkaistu") &&
+      !s7b.isError && s7b.sc?.sivu === 2 && s7b.sc.rivit.length === 710 && s7b.sc.rivit_alkaen === 1001 && s7b.sc.seuraava === null && s7b.text.includes("Rivit 1001–1710 / 1710 (sivu 2/2") && rivejaTekstissa(s7b) === 710,
+    `rakenne: tilasto sivuttaa tekstin ja rakenteen samoin (${s7.sc?.rivit?.length}/${rivejaTekstissa(s7)}, ${s7b.sc?.rivit?.length}/${rivejaTekstissa(s7b)})`,
+  );
+  const e1 = await tool("tilasto", { taulukko: "foo/bar" });
+  check(e1.isError && e1.sc?.virhe?.koodi === "ei_loydy" && e1.text.includes("Taulukkoa foo/bar ei löytynyt"), "rakenne: tilasto tuntematon alue (StatFin 400) -> ei_loydy");
   const v1 = await tool("tilasto", { taulukko: "huono" });
   const v2 = await tool("tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "*", Ikä: "*", Sukupuoli: "*" } });
   const v3 = await tool("etsi_toimiala", { hakusana: "a" });
@@ -328,6 +341,9 @@ for (const [name, args, pred, maxFetch] of cases) {
     globalThis.fetch = async () => new Response("", { status: 503 });
     const h = await tool("hae_tilastoja", { hakusana: "lähdevirhekoe" });
     check(h.isError && h.text.includes("Tietolähteen haku epäonnistui: Lähde vastasi 503") && h.sc?.virhe?.koodi === "lahde" && h.sc.virhe.lahteen_koodi === "503", "virheteksti: lähteen tila rakenteisena (lahde, 503)");
+    globalThis.fetch = async () => { throw new TypeError(SALAISUUS); };
+    const yh = await tool("yrityksen_tiedot", { y_tunnus: "0112038-9" });
+    check(yh.isError && yh.text.includes("Lähteeseen ei saatu yhteyttä") && !yh.text.includes(SALAISUUS), "virheteksti: verkkovirheen sisäistä tekstiä ei näytetä");
     globalThis.fetch = async () => ({ ok: true, status: 200, headers: new Headers(), text: async () => { throw new Error(SALAISUUS); } });
     const x = await tool("tilasto", { taulukko: "koe/salainen1" });
     check(x.isError && x.text.includes("Haku epäonnistui") && x.sc?.virhe?.koodi === "yleinen" && !JSON.stringify(x).includes(SALAISUUS), "virheteksti: rakenteinen virhe ei paljasta sisäistä tekstiä (yleinen)");

@@ -125,7 +125,7 @@ async function fetchCsv(url, ttl) {
       last = new HttpError(`EKP:n rajapinta vastasi ${res.status}`, res.status);
       if (res.status < 500 && res.status !== 429) break;
     } catch (e) {
-      last = new HttpError(`EKP:n rajapintaan ei saatu yhteyttä: ${e?.message ?? e}`, 0);
+      last = new HttpError("EKP:n rajapintaan ei saatu yhteyttä", 0);
     }
     await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
   }
