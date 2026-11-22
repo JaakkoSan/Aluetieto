@@ -19,7 +19,7 @@ import { postAreas, areasOfMunicipality, population, establishments, establishme
 import { TOL2025 } from "./tol2025.js";
 import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yearBefore, ecbRates, rateOn, referenceRate, periodStart, periodEnd, FIRST_REFERENCE_PERIOD } from "./talous.js";
 import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
-import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
+import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, statfinLinkki, STATFIN_SOURCE } from "./statfin.js";
 import { resolvePtvArea, servicesInArea, service, channels, channelText, serviceSummary, PTV_SOURCE } from "./ptv.js";
 import { haversineKm, bboxAround, summarize, postalCenter, SAAV_SOURCE } from "./saavutettavuus.js";
 import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryText, ytjWebUrl, NOTICE_TYPES, PAGE_SIZE, KREK_SOURCE } from "./krek.js";
@@ -31,12 +31,12 @@ import * as tyonv from "./tyonv.js";
 import * as kal from "./kalenteri.js";
 
 const MAX_OUTPUT = 50_000;
-const MAX_POSTCODES = 30;
+export const MAX_POSTCODES = 30;
 
 const YTJ_NOTE =
   "Huom: YTJ:n avoimessa datassa ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, ay, osuuskunta ym.). Toiminimet eli yksityiset elinkeinonharjoittajat puuttuvat, joten esimerkiksi kauneudenhoidossa todellinen yritysmäärä on selvästi suurempi.";
 
-const TARGETS = {
+export const TARGETS = {
   kaikki: { key: "total", label: "asukkaat yhteensä" },
   naiset: { key: "women", label: "naiset" },
   "0-17": { key: "age0_17", label: "0–17-vuotiaat" },
@@ -50,7 +50,7 @@ const SOURCES_FOOTER =
 
 // ---------- Määrittelyt ----------
 
-const areaProps = {
+export const areaProps = {
   postinumerot: {
     type: "array",
     items: { type: "string" },
@@ -61,35 +61,6 @@ const areaProps = {
 
 export const TOOLS = [
   {
-    name: "etsi_toimiala",
-    description:
-      "Etsii toimialaluokituksen TOL 2025 koodeja nimen osalla tai koodilla (esim. \"kauneudenhoito\" -> 96220, \"kotihoito\" -> 88101). YTJ käyttää TOL 2025 -koodeja. Lyhyempi koodi (esim. \"962\") kattaa kaikki sen alaluokat.",
-    inputSchema: {
-      type: "object",
-      properties: { hakusana: { type: "string", description: "Nimen osa tai koodin alku." } },
-      required: ["hakusana"],
-    },
-  },
-  {
-    name: "hae_yrityksia",
-    description:
-      "Hakee yrityksiä PRH:n YTJ-tiedoista toimialan, postinumeron, postitoimipaikan, nimen tai yritysmuodon perusteella. Palauttaa nimen, y-tunnuksen, toimialan, yritysmuodon, osoitteen ja tilan. Toiminimet eivät ole mukana avoimessa datassa. Mukana ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, ay, osuuskunta). Kerro tämä aina, kun esität yritysmääriä, ja käytä tarvittaessa toimipaikat_maakunnittain-työkalua kokonaiskuvaan.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        toimiala: { type: "string", description: "TOL 2025 -koodi tai sen alku (esim. \"96220\", \"962\") tai toimialan nimi." },
-        postinumero: { type: "string", description: "Käynti- tai postiosoitteen postinumero." },
-        paikkakunta: { type: "string", description: "Postitoimipaikka, esim. \"Kotka\"." },
-        nimi: { type: "string", description: "Toiminimi tai sen osa." },
-        yritysmuoto: { type: "string", enum: Object.keys(COMPANY_FORMS), description: "Yritysmuoto, esim. OY, KY, AY, OK." },
-        rekisteroity_alkaen: { type: "string", description: "Rekisteröity aikaisintaan (vvvv-kk-pp). Uusien yritysten seurantaan." },
-        rekisteroity_paattyen: { type: "string", description: "Rekisteröity viimeistään (vvvv-kk-pp)." },
-        vain_toimivat: { type: "boolean", description: "Vain kaupparekisterissä olevat, toimivat yritykset (oletus true)." },
-        sivu: { type: "integer", description: "Tulossivu (100 yritystä/sivu)." },
-      },
-    },
-  },
-  {
     name: "yrityksen_tiedot",
     description:
       "Palauttaa yhden yrityksen YTJ-tiedot y-tunnuksella: nimet ja aputoiminimet, yritysmuoto, päätoimiala, osoite, rekisterit (kaupparekisteri, ALV, ennakkoperintä, työnantajarekisteri), tila ja mahdollinen konkurssi, saneeraus tai selvitystila.",
@@ -97,33 +68,6 @@ export const TOOLS = [
       type: "object",
       properties: { y_tunnus: { type: "string", description: "Y-tunnus, esim. \"0112038-9\"." } },
       required: ["y_tunnus"],
-    },
-  },
-  {
-    name: "alueen_vaesto",
-    description:
-      "Palauttaa Tilastokeskuksen Paavo-tiedoista asukasmäärän, sukupuolijakauman, keski-iän, ikäryhmät (0–17, 18–64, 65+, 75+) ja mediaanitulot postinumeroalueittain. Anna postinumerot tai kunta.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ...areaProps,
-        vuosi: { type: "integer", description: "Tilastovuosi (oletus uusin)." },
-      },
-    },
-  },
-  {
-    name: "aluetarkistus",
-    description:
-      "Laskee alueen yritysten määrän toimialalla (YTJ) ja vertaa sitä asukasmäärään (Paavo) postinumeroalueittain: toimijoita, asukkaita ja asukasta per toimija. Kohderyhmänä voi käyttää esim. naisia tai 75 vuotta täyttäneitä. Toiminimet puuttuvat YTJ:n avoimesta datasta, joten toimijamäärä on alaraja. Mukana ovat vain kaupparekisteriin merkityt yhteisöt (oy, ky, ay, osuuskunta). Kerro tämä aina, kun esität yritysmääriä, ja käytä tarvittaessa toimipaikat_maakunnittain-työkalua kokonaiskuvaan.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        toimiala: { type: "string", description: "TOL 2025 -koodi tai sen alku, esim. \"96220\" tai \"962\"." },
-        ...areaProps,
-        kohderyhma: { type: "string", enum: Object.keys(TARGETS), description: "Väestöryhmä, johon toimijamäärää verrataan (oletus kaikki)." },
-        nayta_yritykset: { type: "boolean", description: "Listaa löydetyt yritykset (oletus true)." },
-      },
-      required: ["toimiala"],
     },
   },
   {
@@ -192,19 +136,6 @@ export const TOOLS = [
     },
   },
   {
-    name: "hae_tilastoja",
-    description:
-      "Hakee Tilastokeskuksen StatFin-tietokannan taulukoita hakusanalla (esim. \"työttömyysaste\", \"kotitalouksien velat\", \"yritykset toimialoittain\", \"väestöennuste\"). Palauttaa taulukon tunnuksen (esim. tyti/135z), otsikon ja päivityspäivän. Rakenne tilaston_rakenne-työkalulla ja luvut tilasto-työkalulla.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        hakusana: { type: "string", description: "Hakusanat, esim. \"työllisyysaste kunnittain\"." },
-        sivu: { type: "integer", description: "Tulossivu, 1 = ensimmäinen (20 taulukkoa sivulla)." },
-      },
-      required: ["hakusana"],
-    },
-  },
-  {
     name: "tilaston_rakenne",
     description:
       "Palauttaa StatFin-taulukon muuttujat ja niiden arvot (koodi ja teksti), aikamuuttujan alku ja loppu sekä tiedon, voiko muuttujan jättää valitsematta (summa). Käytä ennen tilasto-työkalua valintojen muodostamiseen.",
@@ -214,19 +145,6 @@ export const TOOLS = [
         taulukko: { type: "string", description: "Taulukon tunnus hae_tilastoja-työkalulta, esim. \"tyti/135z\"." },
         muuttuja: { type: "string", description: "Näytä tämän muuttujan kaikki arvot (koodi tai nimi). Valinnainen." },
         hakusana: { type: "string", description: "Rajaa muuttujan arvot tekstillä, esim. kunnan nimi. Valinnainen." },
-      },
-      required: ["taulukko"],
-    },
-  },
-  {
-    name: "tilasto",
-    description:
-      "Hakee luvut StatFin-taulukosta. valinnat: { muuttuja: arvo tai [arvot] }, muuttuja koodina tai nimenä, arvo koodina tai tekstinä; \"*\" = kaikki, \"viimeiset 5\" = aikamuuttujan viimeiset. Valitsematta jätetyt: aika = viimeisin, eliminoitava = yhteensä, muut = ensimmäinen arvo. Enintään 3 000 solua. Kerro taulukon tunnus ja nimi, rajaukset, vuosi tai kuukausi ja lähde (Tilastokeskus, StatFin).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        taulukko: { type: "string", description: "Taulukon tunnus, esim. \"vaerak/11rc\"." },
-        valinnat: { type: "object", description: "Esim. {\"Vuosi\": \"viimeiset 3\", \"Ikä\": [\"75 - 79\", \"80 - 84\"], \"Sukupuoli\": \"Naiset\"}.", additionalProperties: true },
       },
       required: ["taulukko"],
     },
@@ -489,7 +407,7 @@ export const TOOLS = [
   },
 ];
 
-const TITLES = {
+export const TITLES = {
   etsi_toimiala: "Etsi toimialakoodi",
   hae_yrityksia: "Hae yrityksiä (YTJ)",
   yrityksen_tiedot: "Yrityksen tiedot (YTJ)",
@@ -534,7 +452,10 @@ for (const t of TOOLS) {
 
 // ---------- Apufunktiot ----------
 
-class UserError extends Error {}
+/** Käyttäjän syötteen virhe (rakenteisessa virheessä koodi syote). */
+export class UserError extends Error {}
+/** Haettua (esim. taulukkoa) ei ole lähteessä (rakenteisessa virheessä koodi ei_loydy; tekstinä kuten UserError). */
+export class EiLoydyVirhe extends UserError {}
 
 // Odottamattoman poikkeuksen tilalla näytettävä teksti (sama kuin yhteisessä rungossa).
 const YLEINEN_VIRHE = "Haku epäonnistui. Yritä hetken päästä uudelleen.";
@@ -604,37 +525,80 @@ async function resolveArea(args, budget) {
   return { codes, label };
 }
 
-function companyLine(c) {
+// ---------- Toteutukset ----------
+
+// Koodiajo-valmius (1.16.0): kuusi työkalua (etsi_toimiala, hae_yrityksia, alueen_vaesto, aluetarkistus, hae_tilastoja,
+// tilasto) on jaettu kahteen funktioon: <nimi>Tulos(args) hakee ja palauttaa rakenteisen tuloksen (structuredContent),
+// ja <nimi>Teksti(tulos) muotoilee siitä saman tekstin kuin ennen. Työkalumäärittelyt ovat src/tyokalut.js:ssä.
+
+/** YTJ:n kattavuus rakenteisessa tuloksessa (sama varaus kuin tekstissä). */
+export const YTJ_KATTAVUUS = { vain_kaupparekisteri: true, toiminimet_puuttuvat: true, huomautus: YTJ_NOTE };
+const TOL_LAHDE = { nimi: "Tilastokeskus, toimialaluokitus TOL 2025", linkki: "https://stat.fi/fi/luokitukset/toimiala/toimiala_1_20250101" };
+const YTJ_LAHDE = { nimi: "Patentti- ja rekisterihallitus, YTJ avoin data", linkki: "https://avoindata.prh.fi/fi" };
+const PAAVO_LAHDE = {
+  nimi: "Tilastokeskus, Paavo – postinumeroalueittainen avoin tieto (CC BY 4.0)",
+  linkki: "https://pxdata.stat.fi/PxWeb/pxweb/fi/Postinumeroalueittainen_avoin_tieto/",
+};
+const STATFIN_LAHDE = { nimi: STATFIN_SOURCE.replace(/^Lähde:\s*/, ""), linkki: "https://pxdata.stat.fi/PxWeb/pxweb/fi/StatFin/" };
+const tilastovuosi = (y) => (/^\d{4}$/.test(String(y)) ? Number(y) : String(y));
+const ilmanTyhjia = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+
+/** Yrityksen rivi rakenteisessa tuloksessa (YTJ). */
+function yritysRivi(c) {
   const bl = businessLine(c);
   const a = address(c);
-  const sit = situations(c);
+  const id = c.businessId?.value ?? "";
+  return {
+    y_tunnus: id,
+    nimi: currentName(c),
+    yritysmuoto: companyForm(c) ?? null,
+    toimiala: bl ? { koodi: bl.code, nimi: bl.name } : null,
+    osoite: a?.text ?? null,
+    postinumero: a?.postCode ?? null,
+    toimiva: isActive(c),
+    tila: statusText(c),
+    tilanteet: situations(c),
+    linkki: id ? ytjWebUrl(id) : null,
+  };
+}
+
+/** Tekstirivi rakenteisesta yritysrivistä (sama kuin companyLine). */
+function yritysTeksti(r) {
   const parts = [
-    `${currentName(c)} (${c.businessId?.value})`,
-    companyForm(c),
-    bl ? `${bl.code} ${bl.name}` : null,
-    a?.text,
-    isActive(c) ? null : statusText(c),
-    sit.length ? sit.join(", ") : null,
+    `${r.nimi} (${r.y_tunnus})`,
+    r.yritysmuoto,
+    r.toimiala ? `${r.toimiala.koodi} ${r.toimiala.nimi}` : null,
+    r.osoite,
+    r.toimiva ? null : r.tila,
+    r.tilanteet.length ? r.tilanteet.join(", ") : null,
   ].filter(Boolean);
   return "- " + parts.join(" | ");
 }
 
-// ---------- Toteutukset ----------
-
-async function etsiToimiala(args) {
+export async function etsiToimialaTulos(args) {
   const q = String(args.hakusana ?? "").trim().toLowerCase();
   if (q.length < 2) throw new UserError("Anna vähintään 2 merkkiä.");
   const isCode = /^\d+$/.test(q);
   const hits = TOL2025.filter((r) => (isCode ? r[0].startsWith(q) : r[2].toLowerCase().includes(q)) && /^\d+$/.test(r[0]));
-  if (!hits.length) return `Ei osumia hakusanalle "${args.hakusana}".`;
-  const lines = hits.slice(0, 40).map((r) => `${"  ".repeat(Math.max(0, r[1] - 2))}${r[0]} ${r[2]}`);
-  let out = `Toimialaluokitus TOL 2025, osumat (${hits.length}${hits.length > 40 ? ", näytetään 40" : ""}):\n` + lines.join("\n");
+  return {
+    hakusana: String(args.hakusana),
+    osumia: hits.length,
+    rajattu: hits.length > 40,
+    toimialat: hits.slice(0, 40).map((r) => ({ koodi: r[0], taso: r[1], nimi: r[2] })),
+    lahde: TOL_LAHDE,
+  };
+}
+
+export function etsiToimialaTeksti(d) {
+  if (!d.osumia) return `Ei osumia hakusanalle "${d.hakusana}".`;
+  const lines = d.toimialat.map((r) => `${"  ".repeat(Math.max(0, r.taso - 2))}${r.koodi} ${r.nimi}`);
+  let out = `Toimialaluokitus TOL 2025, osumat (${d.osumia}${d.rajattu ? ", näytetään 40" : ""}):\n` + lines.join("\n");
   out += "\n\nYTJ-haussa koodin alku kattaa alaluokat (esim. 962 = kampaamot, kauneudenhoito ja kylpylät).";
   out += "\nLähde: Tilastokeskus, toimialaluokitus TOL 2025.";
   return out;
 }
 
-async function haeYrityksia(args) {
+export async function haeYrityksiaTulos(args) {
   const budget = newBudget();
   const ind = args.toimiala ? resolveIndustry(args.toimiala) : null;
   const params = {
@@ -654,13 +618,39 @@ async function haeYrityksia(args) {
   const onlyActive = args.vain_toimivat !== false;
   const list = onlyActive ? companies.filter(isActive) : companies;
   const pages = Math.ceil(total / 100);
+  return {
+    hakuehdot: ilmanTyhjia({
+      toimiala: ind ? ilmanTyhjia({ koodi: ind.code, nimi: ind.name }) : undefined,
+      postinumero: args.postinumero,
+      paikkakunta: args.paikkakunta,
+      nimi: args.nimi,
+      yritysmuoto: args.yritysmuoto,
+      rekisteroity_alkaen: args.rekisteroity_alkaen,
+      rekisteroity_paattyen: args.rekisteroity_paattyen,
+    }),
+    vain_toimivat: onlyActive,
+    yhteensa: total,
+    sivu: params.page,
+    sivuja: Math.max(pages, 1),
+    seuraava: params.page < pages ? params.page + 1 : null,
+    sivun_koko: 100,
+    sivulla: list.length,
+    pois_suodatettu: companies.length - list.length,
+    yritykset: list.map(yritysRivi),
+    kattavuus: YTJ_KATTAVUUS,
+    lahde: YTJ_LAHDE,
+  };
+}
+
+export function haeYrityksiaTeksti(d) {
+  const ind = d.hakuehdot.toimiala;
   const head = [
-    `YTJ-haku${ind ? `, toimiala ${ind.code}${ind.name ? ` ${ind.name}` : ""}` : ""}: ${fmt(total)} yritystä hakuehdoilla, sivu ${params.page}/${Math.max(pages, 1)}.`,
-    onlyActive ? `Tällä sivulla toimivia: ${list.length} (lakanneet ja poistetut jätetty pois).` : `Tällä sivulla: ${list.length}.`,
+    `YTJ-haku${ind ? `, toimiala ${ind.koodi}${ind.nimi ? ` ${ind.nimi}` : ""}` : ""}: ${fmt(d.yhteensa)} yritystä hakuehdoilla, sivu ${d.sivu}/${d.sivuja}.`,
+    d.vain_toimivat ? `Tällä sivulla toimivia: ${d.sivulla} (lakanneet ja poistetut jätetty pois).` : `Tällä sivulla: ${d.sivulla}.`,
   ];
-  const lines = list.map(companyLine);
+  const lines = d.yritykset.map(yritysTeksti);
   let out = head.join("\n") + "\n\n" + (lines.length ? lines.join("\n") : "(ei yrityksiä)");
-  if (params.page < pages) out += `\n\nLisää tuloksia: sivu ${params.page + 1}.`;
+  if (d.seuraava) out += `\n\nLisää tuloksia: sivu ${d.seuraava}.`;
   out += `\n\n${YTJ_NOTE}\nLähde: Patentti- ja rekisterihallitus, YTJ avoin data.`;
   return clip(out);
 }
@@ -692,29 +682,65 @@ async function yrityksenTiedot(args) {
   return lines.join("\n");
 }
 
-async function alueenVaesto(args) {
+export async function alueenVaestoTulos(args) {
   const budget = newBudget();
   const { codes, label } = await resolveArea(args, budget);
   if (codes.length > 120) throw new UserError(`Alueella on ${codes.length} postinumeroa. Rajaa postinumeroilla.`);
   const { year, rows, unknown } = await population(codes, { year: args.vuosi, budget });
-  if (!rows.length) throw new UserError("Postinumeroille ei löytynyt Paavo-tietoja.");
+  if (!rows.length) throw new EiLoydyVirhe("Postinumeroille ei löytynyt Paavo-tietoja.");
   const sum = (k) => rows.reduce((s, r) => (r[k] === null || s === null ? null : s + r[k]), 0);
+  return {
+    alue: label,
+    vuosi: tilastovuosi(year),
+    postinumeroalueet: rows.map((r) => ({
+      postinumero: r.code,
+      nimi: r.name,
+      kunta: r.kunta ?? null,
+      asukkaat: r.total,
+      naiset: r.women,
+      miehet: r.men,
+      ika_0_17: r.age0_17,
+      ika_18_64: r.age18_64,
+      ika_65_plus: r.age65p,
+      ika_75_plus: r.age75p,
+      keski_ika: r.avgAge,
+      mediaanitulo: r.medianIncome,
+    })),
+    yhteensa:
+      rows.length > 1
+        ? {
+            asukkaat: sum("total"),
+            naiset: sum("women"),
+            miehet: sum("men"),
+            ika_0_17: sum("age0_17"),
+            ika_18_64: sum("age18_64"),
+            ika_65_plus: sum("age65p"),
+            ika_75_plus: sum("age75p"),
+          }
+        : null,
+    tuntemattomat: unknown,
+    lahde: PAAVO_LAHDE,
+  };
+}
+
+export function alueenVaestoTeksti(d) {
   const lines = [
-    `Väestö ${year}, ${label}`,
+    `Väestö ${d.vuosi}, ${d.alue}`,
     "",
     "Postinumero | Alue | Asukkaat | Naiset | 0–17 | 18–64 | 65+ | 75+ | Keski-ikä | Mediaanitulo €",
   ];
-  for (const r of rows) {
+  for (const r of d.postinumeroalueet) {
     lines.push(
-      `${r.code} | ${r.name} | ${fmt(r.total)} | ${fmt(r.women)} | ${fmt(r.age0_17)} | ${fmt(r.age18_64)} | ${fmt(r.age65p)} | ${fmt(r.age75p)} | ${r.avgAge ?? "–"} | ${fmt(r.medianIncome)}`,
+      `${r.postinumero} | ${r.nimi} | ${fmt(r.asukkaat)} | ${fmt(r.naiset)} | ${fmt(r.ika_0_17)} | ${fmt(r.ika_18_64)} | ${fmt(r.ika_65_plus)} | ${fmt(r.ika_75_plus)} | ${r.keski_ika ?? "–"} | ${fmt(r.mediaanitulo)}`,
     );
   }
-  if (rows.length > 1) {
+  const y = d.yhteensa;
+  if (y) {
     lines.push(
-      `Yhteensä | | ${fmt(sum("total"))} | ${fmt(sum("women"))} | ${fmt(sum("age0_17"))} | ${fmt(sum("age18_64"))} | ${fmt(sum("age65p"))} | ${fmt(sum("age75p"))} | | `,
+      `Yhteensä | | ${fmt(y.asukkaat)} | ${fmt(y.naiset)} | ${fmt(y.ika_0_17)} | ${fmt(y.ika_18_64)} | ${fmt(y.ika_65_plus)} | ${fmt(y.ika_75_plus)} | | `,
     );
   }
-  if (unknown.length) lines.push("", `Tuntemattomat postinumerot: ${unknown.join(", ")}`);
+  if (d.tuntemattomat.length) lines.push("", `Tuntemattomat postinumerot: ${d.tuntemattomat.join(", ")}`);
   lines.push(
     "",
     "Alle 30 asukkaan alueiden tiedot on salattu (–). Mediaanitulo = 18 vuotta täyttäneiden asukkaiden käytettävissä olevien rahatulojen mediaani.",
@@ -723,7 +749,11 @@ async function alueenVaesto(args) {
   return clip(lines.join("\n"));
 }
 
-async function aluetarkistus(args) {
+/** Rakenteisessa tuloksessa listataan enintään näin monta yritystä (teksti listaa kaikki). */
+export const ALUETARKISTUS_YRITYKSET_ENINTAAN = 100;
+const pyorista1 = (x) => Math.round(x * 10) / 10;
+
+export async function aluetarkistusTulos(args) {
   const budget = newBudget();
   const ind = resolveIndustry(args.toimiala);
   if (!ind) throw new UserError("Anna toimiala.");
@@ -733,7 +763,8 @@ async function aluetarkistus(args) {
       `Alueella on ${codes.length} postinumeroa, enintään ${MAX_POSTCODES} kerralla. Anna haluamasi postinumerot (alueen_vaesto listaa kunnan postinumerot).`,
     );
   }
-  const target = TARGETS[args.kohderyhma] ?? TARGETS.kaikki;
+  const targetKey = Object.hasOwn(TARGETS, args.kohderyhma ?? "") ? args.kohderyhma : "kaikki";
+  const target = TARGETS[targetKey];
 
   const pop = await population(codes, { budget });
 
@@ -757,12 +788,7 @@ async function aluetarkistus(args) {
     }
   }
 
-  const lines = [
-    `Aluetarkistus: toimiala ${ind.code}${ind.name ? ` ${ind.name}` : ""}, ${label}`,
-    `Väestö: ${target.label}, ${pop.year}. Yritykset: YTJ, toimivat kaupparekisteriyhteisöt.`,
-    "",
-    `Postinumero | Alue | Yrityksiä | ${target.label} | Asukasta / yritys`,
-  ];
+  const alueet = [];
   let totalCompanies = 0;
   let totalPop = 0;
   let popMissing = false;
@@ -772,22 +798,62 @@ async function aluetarkistus(args) {
     totalCompanies += n;
     if (p === null) popMissing = true;
     else totalPop += p;
-    const ratio = n && p !== null ? fmt(p / n) : n ? "–" : "ei yrityksiä";
-    lines.push(`${r.code} | ${r.name} | ${n} | ${fmt(p)} | ${ratio}`);
+    alueet.push({ postinumero: r.code, nimi: r.name, yrityksia: n, vaesto: p, asukasta_per_yritys: n && p !== null ? pyorista1(p / n) : null });
   }
-  lines.push(
-    `Yhteensä | | ${totalCompanies} | ${fmt(totalPop)}${popMissing ? " (osa salattu)" : ""} | ${totalCompanies ? fmt(totalPop / totalCompanies) : "ei yrityksiä"}`,
-  );
-  if (pop.unknown.length) lines.push(`Postinumerot, joille ei ole Paavo-tietoa: ${pop.unknown.join(", ")}`);
-  if (truncated) lines.push("Huom: jollakin postinumerolla oli yli 300 osumaa, joten kaikkia ei laskettu.");
 
-  if (args.nayta_yritykset !== false && byId.size) {
-    lines.push("", "Yritykset:");
+  const tulos = {
+    toimiala: ilmanTyhjia({ koodi: ind.code, nimi: ind.name }),
+    alue: label,
+    kohderyhma: { tunnus: targetKey, nimi: target.label },
+    vuosi: tilastovuosi(pop.year),
+    postinumeroalueet: alueet,
+    yhteensa: {
+      yrityksia: totalCompanies,
+      vaesto: totalPop,
+      vaesto_osin_salattu: popMissing,
+      asukasta_per_yritys: totalCompanies ? pyorista1(totalPop / totalCompanies) : null,
+    },
+    tuntemattomat: pop.unknown,
+    osin_laskematta: truncated,
+    kattavuus: YTJ_KATTAVUUS,
+    lahde: { nimi: "Patentti- ja rekisterihallitus, YTJ avoin data; Tilastokeskus, Paavo (CC BY 4.0)", linkki: YTJ_LAHDE.linkki },
+    lahteet: [YTJ_LAHDE, PAAVO_LAHDE],
+  };
+  if (args.nayta_yritykset !== false) {
     // Postinumerot ovat numeromerkkijonoja: tavallinen vertailu (ei ICU-lajittelua).
     const pcOf = (c) => address(c)?.postCode ?? "";
-    for (const c of [...byId.values()].sort((a, b) => (pcOf(a) < pcOf(b) ? -1 : pcOf(a) > pcOf(b) ? 1 : 0))) {
-      lines.push(companyLine(c));
-    }
+    const kaikki = [...byId.values()].sort((a, b) => (pcOf(a) < pcOf(b) ? -1 : pcOf(a) > pcOf(b) ? 1 : 0)).map(yritysRivi);
+    tulos.yritykset = kaikki.slice(0, ALUETARKISTUS_YRITYKSET_ENINTAAN);
+    tulos.yritykset_rajattu = kaikki.length > ALUETARKISTUS_YRITYKSET_ENINTAAN;
+    // Teksti listaa kaikki; rakenteeseen ei (poisRakenteesta, src/tyokalut.js).
+    tulos.yritykset_kaikki = kaikki;
+  }
+  return tulos;
+}
+
+export function aluetarkistusTeksti(d) {
+  const lines = [
+    `Aluetarkistus: toimiala ${d.toimiala.koodi}${d.toimiala.nimi ? ` ${d.toimiala.nimi}` : ""}, ${d.alue}`,
+    `Väestö: ${d.kohderyhma.nimi}, ${d.vuosi}. Yritykset: YTJ, toimivat kaupparekisteriyhteisöt.`,
+    "",
+    `Postinumero | Alue | Yrityksiä | ${d.kohderyhma.nimi} | Asukasta / yritys`,
+  ];
+  for (const r of d.postinumeroalueet) {
+    const n = r.yrityksia;
+    const p = r.vaesto;
+    const ratio = n && p !== null ? fmt(p / n) : n ? "–" : "ei yrityksiä";
+    lines.push(`${r.postinumero} | ${r.nimi} | ${n} | ${fmt(p)} | ${ratio}`);
+  }
+  const y = d.yhteensa;
+  lines.push(
+    `Yhteensä | | ${y.yrityksia} | ${fmt(y.vaesto)}${y.vaesto_osin_salattu ? " (osa salattu)" : ""} | ${y.yrityksia ? fmt(y.vaesto / y.yrityksia) : "ei yrityksiä"}`,
+  );
+  if (d.tuntemattomat.length) lines.push(`Postinumerot, joille ei ole Paavo-tietoa: ${d.tuntemattomat.join(", ")}`);
+  if (d.osin_laskematta) lines.push("Huom: jollakin postinumerolla oli yli 300 osumaa, joten kaikkia ei laskettu.");
+  const kaikki = d.yritykset_kaikki ?? d.yritykset ?? [];
+  if (kaikki.length) {
+    lines.push("", "Yritykset:");
+    for (const r of kaikki) lines.push(yritysTeksti(r));
   }
   lines.push(
     "",
@@ -1230,16 +1296,36 @@ function asTableId(v) {
   return id;
 }
 
-async function haeTilastoja(args) {
+export async function haeTilastojaTulos(args) {
   const q = String(args.hakusana ?? "").trim();
   if (!q) throw new UserError("Anna hakusana.");
   const page = Math.max(1, Number(args.sivu) || 1);
   const all = await searchTables(q, newBudget(3));
-  if (!all.length) return `StatFin-taulukoita ei löytynyt hakusanalla "${q}". Kokeile perusmuotoa tai lyhyempää hakua (haku vertaa sanoja sellaisinaan).`;
-  const list = all.slice((page - 1) * 20, page * 20);
-  const out = [`StatFin-taulukot hakusanalla "${q}": ${all.length} osumaa, sivu ${page} (osuvin ensin).`, ""];
-  for (const t of list) out.push(`${t.id} ${t.title}${t.published ? ` (päivitetty ${fmtDate(t.published)})` : ""}`);
-  if (all.length > page * 20) out.push("", `Lisää: sivu ${page + 1}.`);
+  return {
+    hakusana: q,
+    yhteensa: all.length,
+    sivu: page,
+    sivuja: Math.max(1, Math.ceil(all.length / 20)),
+    seuraava: all.length > page * 20 ? page + 1 : null,
+    sivun_koko: 20,
+    taulukot: all.slice((page - 1) * 20, page * 20).map((t) => {
+      const id = parseTableId(t.id);
+      return {
+        tunnus: t.id,
+        otsikko: t.title,
+        paivitetty: t.published ? String(t.published).slice(0, 10) : null,
+        linkki: id ? statfinLinkki(id) : STATFIN_LAHDE.linkki,
+      };
+    }),
+    lahde: STATFIN_LAHDE,
+  };
+}
+
+export function haeTilastojaTeksti(d) {
+  if (!d.yhteensa) return `StatFin-taulukoita ei löytynyt hakusanalla "${d.hakusana}". Kokeile perusmuotoa tai lyhyempää hakua (haku vertaa sanoja sellaisinaan).`;
+  const out = [`StatFin-taulukot hakusanalla "${d.hakusana}": ${d.yhteensa} osumaa, sivu ${d.sivu} (osuvin ensin).`, ""];
+  for (const t of d.taulukot) out.push(`${t.tunnus} ${t.otsikko}${t.paivitetty ? ` (päivitetty ${fmtDate(t.paivitetty)})` : ""}`);
+  if (d.seuraava) out.push("", `Lisää: sivu ${d.seuraava}.`);
   out.push("", "Rakenne: tilaston_rakenne (taulukko). Luvut: tilasto (taulukko, valinnat).", STATFIN_SOURCE);
   return clip(out.join("\n"));
 }
@@ -1278,11 +1364,11 @@ const fmtNum = (v) => {
   return i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d ? `,${d}` : "");
 };
 
-async function tilasto(args) {
+export async function tilastoTulos(args) {
   const id = asTableId(args.taulukko);
   const budget = newBudget(3);
   const meta = await tableMeta(id, budget);
-  if (!meta) throw new UserError(`Taulukkoa ${id.area}/${id.table} ei löytynyt StatFinistä.`);
+  if (!meta) throw new EiLoydyVirhe(`Taulukkoa ${id.area}/${id.table} ei löytynyt StatFinistä.`);
   let built;
   try {
     built = buildQuery(meta, args.valinnat ?? {});
@@ -1294,29 +1380,55 @@ async function tilasto(args) {
   const { dims, rows } = rowsOf(ds);
   const fixed = dims.filter((d) => d.codes.length === 1);
   const varying = dims.map((d, i) => ({ d, i })).filter(({ d }) => d.codes.length > 1);
-  const out = [`${id.area}/${id.table}: ${meta.title}`];
-  if (ds.updated) out.push(`Päivitetty: ${fmtDate(ds.updated)}`);
-  if (fixed.length) out.push(`Rajaus: ${fixed.map((d) => `${d.label} = ${d.labels[0]}`).join("; ")}`);
-  if (built.notes.length) out.push(`Oletusvalinnat: ${built.notes.join("; ")}`);
+  let yksikot = [];
   const ud = dims.find((d) => d.unit);
   if (ud) {
     const u = ud.codes
-      .map((k, i) => ({ name: ud.labels[i], label: ud.unit[k]?.label }))
-      .filter((x) => x.label && String(x.label).trim());
-    if (u.length && u.length <= 10) out.push(`Yksiköt: ${u.map((x) => `${x.name}: ${x.label}`).join("; ")}`);
+      .map((k, i) => ({ nimi: ud.labels[i], yksikko: ud.unit[k]?.label }))
+      .filter((x) => x.yksikko && String(x.yksikko).trim());
+    if (u.length && u.length <= 10) yksikot = u.map((x) => ({ nimi: String(x.nimi), yksikko: String(x.yksikko) }));
   }
-  out.push("");
-  if (varying.length) out.push(varying.map(({ d }) => d.label).join(" | ") + " : arvo");
-  for (const r of rows) {
-    const lab = varying.map(({ i }) => r.labels[i]).join(" | ");
-    out.push(`${lab || "Arvo"}: ${fmtNum(r.value)}${r.status ? ` (${r.status})` : ""}`);
-  }
+  const aikaValinta = built.chosen.find((c) => c.v.time);
   const notes = ds.note ?? [];
   const clean = notes
     .map((n) => String(n).replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
     .filter((n) => n.length > 2);
-  if (clean.length) out.push("", ...clean.slice(0, 5).map((n) => `Huom: ${n.slice(0, 400)}`));
-  out.push("", `".." = tieto puuttuu tai on salassa pidettävä. ${STATFIN_SOURCE}, taulukko ${id.area}/${id.table}.`);
+  return {
+    taulukko: `${id.area}/${id.table}`,
+    otsikko: meta.title,
+    paivitetty: ds.updated ?? null,
+    aika: aikaValinta
+      ? { muuttuja: aikaValinta.v.text, arvot: aikaValinta.codes.map((c) => aikaValinta.v.texts[aikaValinta.v.values.indexOf(c)] ?? c) }
+      : null,
+    rajaus: fixed.map((d) => ({ muuttuja: d.label, arvo: d.labels[0] })),
+    oletusvalinnat: built.notes,
+    yksikot,
+    sarakkeet: varying.map(({ d }) => d.label),
+    soluja: rows.length,
+    rivit: rows.map((r) => ({
+      luokat: varying.map(({ i }) => r.labels[i]),
+      arvo: typeof r.value === "number" && Number.isFinite(r.value) ? r.value : null,
+      tila: r.status ? String(r.status) : null,
+    })),
+    huomautukset: clean.slice(0, 5).map((n) => n.slice(0, 400)),
+    lahde: { nimi: STATFIN_LAHDE.nimi, linkki: statfinLinkki(id) },
+  };
+}
+
+export function tilastoTeksti(d) {
+  const out = [`${d.taulukko}: ${d.otsikko}`];
+  if (d.paivitetty) out.push(`Päivitetty: ${fmtDate(d.paivitetty)}`);
+  if (d.rajaus.length) out.push(`Rajaus: ${d.rajaus.map((r) => `${r.muuttuja} = ${r.arvo}`).join("; ")}`);
+  if (d.oletusvalinnat.length) out.push(`Oletusvalinnat: ${d.oletusvalinnat.join("; ")}`);
+  if (d.yksikot.length) out.push(`Yksiköt: ${d.yksikot.map((x) => `${x.nimi}: ${x.yksikko}`).join("; ")}`);
+  out.push("");
+  if (d.sarakkeet.length) out.push(d.sarakkeet.join(" | ") + " : arvo");
+  for (const r of d.rivit) {
+    const lab = r.luokat.join(" | ");
+    out.push(`${lab || "Arvo"}: ${fmtNum(r.arvo)}${r.tila ? ` (${r.tila})` : ""}`);
+  }
+  if (d.huomautukset.length) out.push("", ...d.huomautukset.map((n) => `Huom: ${n}`));
+  out.push("", `".." = tieto puuttuu tai on salassa pidettävä. ${STATFIN_SOURCE}, taulukko ${d.taulukko}.`);
   return clip(out.join("\n"));
 }
 
@@ -2525,11 +2637,7 @@ async function avoimetTyopaikat(args) {
 }
 
 const HANDLERS = {
-  etsi_toimiala: etsiToimiala,
-  hae_yrityksia: haeYrityksia,
   yrityksen_tiedot: yrityksenTiedot,
-  alueen_vaesto: alueenVaesto,
-  aluetarkistus,
   toimipaikat_maakunnittain: toimipaikatMaakunnittain,
   sote_indikaattorit: soteIndikaattorit,
   sote_tilasto: soteTilasto,
@@ -2538,9 +2646,7 @@ const HANDLERS = {
   korot,
   yrityksen_talous: yrityksenTalous,
   yhteisoverot,
-  hae_tilastoja: haeTilastoja,
   tilaston_rakenne: tilastonRakenne,
-  tilasto,
   hae_julkisia_palveluja: haeJulkisiaPalveluja,
   julkinen_palvelu: julkinenPalvelu,
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,

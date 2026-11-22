@@ -68,11 +68,29 @@ THL:n ohjeen mukaan Sotkanetin REST-rajapinta on tarkoitettu tietojen noutamisee
 - Ladattavat indikaattorit ovat listassa `src/sotkanet.js` (`INDICATORS`). Lisää tunnus listaan, niin seuraava ajo hakee sen. Mukana vain THL:n ja Tilastokeskuksen tuottamia indikaattoreita (CC BY 4.0); muiden tuottajien (esim. Kela, Valtiokonttori) käyttöehdot pitää tarkistaa erikseen.
 - Tallennetaan kuusi viimeisintä vuotta, alueina kunnat, hyvinvointialueet, maakunnat, seutukunnat ja koko maa.
 
+## Rakenteinen tulos
+
+Kuusi työkalua antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent`, kuvattu työkalun `outputSchema`ssa), jotta tuloksia voi käsitellä myös koodina: `etsi_toimiala`, `hae_yrityksia`, `alueen_vaesto`, `aluetarkistus`, `hae_tilastoja` ja `tilasto`. Tekstituloste on sama kuin ennen. Muut työkalut antavat vain tekstin.
+
+| Työkalu | Rakenteisen tuloksen kentät |
+|---|---|
+| `etsi_toimiala` | `hakusana`, `osumia`, `rajattu`, `toimialat` (`koodi`, `taso`, `nimi`; enintään 40) |
+| `hae_yrityksia` | `hakuehdot`, `vain_toimivat`, `yhteensa` (YTJ:n osumamäärä), `sivu`, `sivuja`, `seuraava`, `sivun_koko`, `sivulla`, `pois_suodatettu`, `yritykset` (`y_tunnus`, `nimi`, `yritysmuoto`, `toimiala`, `osoite`, `postinumero`, `toimiva`, `tila`, `tilanteet`, `linkki`), `kattavuus` |
+| `alueen_vaesto` | `alue`, `vuosi`, `postinumeroalueet` (asukkaat, naiset, miehet, ikäryhmät, keski-ikä, mediaanitulo; salattu = `null`), `yhteensa`, `tuntemattomat` |
+| `aluetarkistus` | `toimiala`, `alue`, `kohderyhma`, `vuosi`, `postinumeroalueet` (`yrityksia`, `vaesto`, `asukasta_per_yritys`), `yhteensa`, `tuntemattomat`, `osin_laskematta`, `kattavuus`, `yritykset` (enintään 100; tekstissä kaikki) ja `yritykset_rajattu`, `lahteet` |
+| `hae_tilastoja` | `hakusana`, `yhteensa`, `sivu`, `sivuja`, `seuraava`, `sivun_koko`, `taulukot` (`tunnus`, `otsikko`, `paivitetty`, `linkki`) |
+| `tilasto` | `taulukko`, `otsikko`, `paivitetty`, `aika` (aikamuuttuja ja valitut vuodet tai kuukaudet), `rajaus`, `oletusvalinnat`, `yksikot`, `sarakkeet`, `soluja`, `rivit` (`luokat`, `arvo`, `tila`; enintään 3 000), `huomautukset` |
+
+- Jokaisessa tuloksessa on `lahde` (`nimi` ja `linkki`). YTJ-tuloksissa `kattavuus` kertoo saman varauksen kuin teksti: vain kaupparekisteriin merkityt yhteisöt, toiminimet puuttuvat.
+- Virhe on rakenteinen: `{ "virhe": { "koodi", "viesti", "lahteen_koodi"? } }`, koodi `syote` (syötteen virhe), `ei_loydy` (taulukkoa tai tietoa ei ole), `raja` (liian monta hakua kerralla), `lahde` (lähteen virhe, `lahteen_koodi` on HTTP-tila) tai `yleinen` (odottamaton virhe; sisäistä tekstiä ei näytetä).
+- Kaikki kuusi ovat vain lukevia (oikeus `luku`). Määrittelyt ovat tiedostossa `src/tyokalut.js` (yhteisen rungon `tyokalu()`), logiikka `src/tools.js`:n funktioissa `<nimi>Tulos` (haku ja rakenne) ja `<nimi>Teksti` (teksti).
+- Savutesti ajaa palvelimen rungon testitilassa (`tarkistaTulokset`): rakenteinen tulos tarkistetaan `outputSchema`a vasten jokaisessa kutsussa.
+
 ## Käyttörajoitus ja merkinnät
 
 - 30 työkalukutsua minuutissa per MCP-istunto ja 300 per IP-osoite (Cloudflare Rate Limiting).
 - Yksi kutsu tekee enintään 45 ulkoista hakua; aluetarkistus enintään 30 postinumerolle kerrallaan.
-- Kaikilla työkaluilla `readOnlyHint: true`. Vastauksen enimmäispituus 50 000 merkkiä.
+- Kaikilla työkaluilla `readOnlyHint: true`. Tekstivastauksen enimmäispituus 50 000 merkkiä.
 
 ## Kehitys
 

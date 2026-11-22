@@ -1,10 +1,12 @@
 // Aluetieto MCP -palvelin Cloudflare Workersissa (Streamable HTTP, tilaton, JSON-vastaukset).
 //
 // Runko (polun tarkistus, Origin, protokolla, JSON-RPC, käyttörajojen vastaus) on yhteisessä mcp-runko.js:ssä
-// (kopio mcp-runko-reposta, ei muokata tässä repossa). Työkalut ja niiden virheiden käsittely ovat src/tools.js:ssä
-// (callTool), ajastetut eräpäivitykset alla (scheduled).
+// (kopio mcp-runko-reposta, ei muokata tässä repossa). Kuusi työkalua on rungon tyokalu()-muodossa (src/tyokalut.js:
+// rakenteinen tulos ja virhekoodit), muut 24 src/tools.js:ssä (callTool, omat virheluokat). Ajastetut eräpäivitykset
+// alla (scheduled).
 
 import { TOOLS, callTool } from "./tools.js";
+import { TYOKALUT } from "./tyokalut.js";
 import { refreshStep } from "./sotkanet.js";
 import { veroStep } from "./yritystalous.js";
 import { HttpError, NaytettavaVirhe } from "./http.js";
@@ -48,23 +50,35 @@ async function rajoissa(ctx) {
   return true;
 }
 
-const palvelin = luoPalvelin({
-  serverInfo: SERVER_INFO,
-  instructions: INSTRUCTIONS,
-  tools: TOOLS,
-  // callTool käsittelee liittimen omat virheluokat (UserError, BudgetError, HttpError, NaytettavaVirhe).
-  callTool: (nimi, args, env) => callTool(nimi, args, env),
-  // Julkinen liitin: /mcp ilman salaisuutta. Jos MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> (ks. lisareitit).
-  polku: { julkinen: true },
-  // Julkinen /mcp ilman tunnistusta: työkalulista saa olla jaetussa välimuistissa (2026-07-28).
-  // Jos MCP_PATH_SECRET otetaan käyttöön, cacheScope vaihdetaan arvoon "private".
-  listaValimuisti: { cacheScope: "public" },
-  juuriteksti: "Aluetieto MCP -palvelin. Ei julkista sisältöä.\n",
-  rajat: rajoissa,
-  // Kun salainen polku on asetettu, julkinen /mcp ei vastaa (sama kuin ennen runkoa).
-  lisareitit: async (request, env) =>
-    env?.MCP_PATH_SECRET && new URL(request.url).pathname === "/mcp" ? new Response("Not found", { status: 404 }) : null,
-});
+/**
+ * Palvelin. Testit antavat tarkistaTulokset: true (rungon testitila: rakenteinen tulos tarkistetaan tulosSkeemaa vasten
+ * ja lahde.nimi vaaditaan); tuotannossa ei.
+ */
+export function luoAluetieto({ tarkistaTulokset = false, varoita } = {}) {
+  return luoPalvelin({
+    serverInfo: SERVER_INFO,
+    instructions: INSTRUCTIONS,
+    tools: TOOLS,
+    // callTool käsittelee liittimen omat virheluokat (UserError, BudgetError, HttpError, NaytettavaVirhe).
+    callTool: (nimi, args, env) => callTool(nimi, args, env),
+    // Koodiajo-valmius: etsi_toimiala, hae_yrityksia, alueen_vaesto, aluetarkistus, hae_tilastoja ja tilasto (oikeus luku).
+    tyokalut: TYOKALUT,
+    // Julkinen liitin: /mcp ilman salaisuutta. Jos MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> (ks. lisareitit).
+    polku: { julkinen: true },
+    // Julkinen /mcp ilman tunnistusta: työkalulista saa olla jaetussa välimuistissa (2026-07-28).
+    // Jos MCP_PATH_SECRET otetaan käyttöön, cacheScope vaihdetaan arvoon "private".
+    listaValimuisti: { cacheScope: "public" },
+    juuriteksti: "Aluetieto MCP -palvelin. Ei julkista sisältöä.\n",
+    rajat: rajoissa,
+    // Kun salainen polku on asetettu, julkinen /mcp ei vastaa (sama kuin ennen runkoa).
+    lisareitit: async (request, env) =>
+      env?.MCP_PATH_SECRET && new URL(request.url).pathname === "/mcp" ? new Response("Not found", { status: 404 }) : null,
+    tarkistaTulokset,
+    ...(varoita ? { varoita } : {}),
+  });
+}
+
+const palvelin = luoAluetieto();
 
 export const handleMessage = palvelin.kasitteleViesti;
 

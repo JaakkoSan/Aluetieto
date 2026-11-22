@@ -135,3 +135,8 @@ export function rowsOf(ds) {
   }
   return { dims, rows };
 }
+
+/** Taulukon sivu Tilastokeskuksen PxWeb-palvelussa (Lähde-linkki), esim. .../StatFin/StatFin__vaerak/11rc.px/ */
+export function statfinLinkki({ area, table }) {
+  return `https://pxdata.stat.fi/PxWeb/pxweb/fi/StatFin/StatFin__${encodeURIComponent(area)}/${encodeURIComponent(table)}.px/`;
+}

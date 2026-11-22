@@ -1,8 +1,13 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
-import worker from "../src/index.js";
+// Palvelin rungon testitilassa (tarkistaTulokset): rakenteinen tulos tarkistetaan tulosSkeemaa vasten ja lahde.nimi
+// vaaditaan jokaisessa onnistuneessa kutsussa; poikkeama kaataa kutsun ja näkyy FAIL-rivinä.
+import { luoAluetieto } from "../src/index.js";
 import pkg from "../package.json" with { type: "json" };
 import { cellText, resolveOccupation } from "../src/tyonv.js";
 import * as kal from "../src/kalenteri.js";
+
+const varoitukset = [];
+const worker = luoAluetieto({ tarkistaTulokset: true, varoita: (v) => varoitukset.push(v) });
 
 // MML_API_KEY ympäristömuuttujana testaa geokoodauksen oikeaa rajapintaa vasten.
 const ENV = process.env.MML_API_KEY ? { MML_API_KEY: process.env.MML_API_KEY } : {};
@@ -24,8 +29,14 @@ async function rpc(method, params) {
   return (await worker.fetch(req, ENV)).json();
 }
 async function tool(name, args) {
-  const r = await rpc("tools/call", { name, arguments: args });
-  return { isError: !!r.result.isError, text: r.result.content.map((c) => c.text).join("\n") };
+  let r;
+  try {
+    r = await rpc("tools/call", { name, arguments: args });
+  } catch (e) {
+    // Testitilan skeemapoikkeama (mcp-runko tarkistaTulokset) tai muu kaatuminen.
+    return { isError: true, text: `POIKKEUS: ${e.message}`, sc: undefined };
+  }
+  return { isError: !!r.result.isError, text: r.result.content.map((c) => c.text).join("\n"), sc: r.result.structuredContent };
 }
 function check(cond, label) {
   console.log(`${cond ? "OK  " : "FAIL"} ${label}`);
@@ -39,6 +50,14 @@ check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä 
 const list = await rpc("tools/list", {});
 check(list.result?.tools?.length === 30 && list.result.tools.every((t) => t.annotations?.readOnlyHint), "tools/list (30, readOnlyHint)");
 check(list.result.tools.filter((t) => ["tulevat_paivat", "koululomat"].includes(t.name)).every((t) => t.annotations.openWorldHint === false), "kalenterityökalut: openWorldHint false");
+// Koodiajo-valmius (1.16.0): kuusi työkalua rakenteisina (outputSchema), muut ilman.
+const RAKENTEISET = ["etsi_toimiala", "hae_yrityksia", "alueen_vaesto", "aluetarkistus", "hae_tilastoja", "tilasto"];
+check(
+  list.result.tools.filter((t) => t.outputSchema).map((t) => t.name).sort().join(",") === [...RAKENTEISET].sort().join(",") &&
+    list.result.tools.filter((t) => RAKENTEISET.includes(t.name)).every((t) => t.annotations.readOnlyHint === true && t.annotations.destructiveHint === false && t.title),
+  "tools/list: kuusi rakenteista työkalua (outputSchema, luku)",
+);
+check(varoitukset.length === 0, `rungon testitilan varoitukset: ${varoitukset.length ? varoitukset.join("; ") : "ei"}`);
 
 // Työnvälitystilasto: salassa pidetty luku ei saa näkyä nollana.
 check(cellText({ value: null, status: "..." }) === "salassa (...)" && cellText({ value: 0, status: null }) === "0" && cellText({ value: null, status: null }) === "ei tietoa", "avoimet_tyopaikat: salassa pidetty luku (..., 0, puuttuva)");
@@ -230,6 +249,54 @@ for (const [name, args, pred, maxFetch] of cases) {
   if (show || !ok) console.log(r.text.slice(0, 3000), "\n------");
 }
 
+// Rakenteinen tulos (structuredContent, 1.16.0): kentät, sivutus, rajaus, Lähde-linkki ja tilastovuosi.
+{
+  const s1 = await tool("etsi_toimiala", { hakusana: "kauneudenhoito" });
+  check(!s1.isError && s1.sc?.toimialat?.some((r) => r.koodi === "96220" && r.taso === 5) && s1.sc.osumia === s1.sc.toimialat.length && s1.sc.rajattu === false && s1.sc.lahde.linkki.startsWith("https://stat.fi/"), "rakenne: etsi_toimiala (koodi, taso, lähde)");
+  const s1b = await tool("etsi_toimiala", { hakusana: "palvelu" });
+  check(s1b.sc?.rajattu === true && s1b.sc.toimialat.length === 40 && s1b.sc.osumia > 40, "rakenne: etsi_toimiala rajattu 40:een");
+  const s2 = await tool("hae_yrityksia", { toimiala: "96220", paikkakunta: "Kotka" });
+  check(
+    !s2.isError && s2.sc?.yritykset?.length === s2.sc.sivulla && s2.sc.sivu === 1 && s2.sc.sivuja >= 1 && "seuraava" in s2.sc &&
+      s2.sc.hakuehdot.toimiala?.koodi === "96220" && s2.sc.kattavuus?.vain_kaupparekisteri === true && s2.sc.kattavuus.toiminimet_puuttuvat === true &&
+      s2.sc.yritykset.every((y) => /^\d{7}-\d$/.test(y.y_tunnus) && y.toimiva && y.linkki.includes(y.y_tunnus)) && s2.text.includes("Toiminimet"),
+    "rakenne: hae_yrityksia (sivutus, kattavuus, yritysrivit)",
+  );
+  const s3 = await tool("alueen_vaesto", { postinumerot: ["48100", "48600", "99999"] });
+  check(
+    !s3.isError && Number.isInteger(s3.sc?.vuosi) && s3.sc.postinumeroalueet.length === 2 && s3.sc.postinumeroalueet[0].postinumero === "48100" &&
+      s3.sc.yhteensa?.asukkaat === s3.sc.postinumeroalueet.reduce((a, r) => a + r.asukkaat, 0) && s3.sc.tuntemattomat.includes("99999") && s3.sc.lahde.linkki.includes("Postinumeroalueittainen"),
+    "rakenne: alueen_vaesto (vuosi, rivit, summa, tuntemattomat)",
+  );
+  const s4 = await tool("aluetarkistus", { toimiala: "962", kunta: "Kotka", kohderyhma: "naiset" });
+  check(
+    !s4.isError && s4.sc?.kohderyhma?.tunnus === "naiset" && Number.isInteger(s4.sc.vuosi) &&
+      s4.sc.yhteensa.yrityksia === s4.sc.postinumeroalueet.reduce((a, r) => a + r.yrityksia, 0) && s4.sc.kattavuus?.vain_kaupparekisteri === true &&
+      Array.isArray(s4.sc.yritykset) && s4.sc.yritykset.length <= 100 && typeof s4.sc.yritykset_rajattu === "boolean" && !("yritykset_kaikki" in s4.sc) && s4.sc.lahteet.length === 2,
+    "rakenne: aluetarkistus (summat, kattavuus, yritykset rajattu, ei tekstin listaa)",
+  );
+  const s4b = await tool("aluetarkistus", { toimiala: "962", postinumerot: ["48100"], nayta_yritykset: false });
+  check(!s4b.isError && !("yritykset" in s4b.sc) && !s4b.text.includes("\nYritykset:\n"), "rakenne: aluetarkistus ilman yrityslistaa");
+  const s5 = await tool("hae_tilastoja", { hakusana: "väestö", sivu: 2 });
+  check(
+    !s5.isError && s5.sc?.sivu === 2 && s5.sc.taulukot.length <= 20 && s5.sc.taulukot.every((t) => /^[a-z0-9_]+\/[a-z0-9_]+$/.test(t.tunnus) && t.linkki.includes(`StatFin__${t.tunnus.split("/")[0]}/`)) &&
+      (s5.sc.seuraava === null || s5.sc.seuraava === 3),
+    "rakenne: hae_tilastoja (sivutus, tunnus, taulukon linkki)",
+  );
+  const s5b = await tool("hae_tilastoja", { hakusana: "qwertyzzz" });
+  check(!s5b.isError && s5b.sc?.yhteensa === 0 && s5b.sc.taulukot.length === 0 && s5b.text.includes("ei löytynyt"), "rakenne: hae_tilastoja ilman osumia");
+  const s6 = await tool("tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "2024", Ikä: ["75 - 79", "80 - 84", "85 -"] } });
+  check(
+    !s6.isError && s6.sc?.aika?.muuttuja === "Vuosi" && s6.sc.aika.arvot.join() === "2024" && s6.sc.sarakkeet.join() === "Ikä" && s6.sc.soluja === 3 &&
+      s6.sc.rivit.find((r) => r.luokat[0] === "75 - 79")?.arvo === 310766 && s6.sc.lahde.linkki.endsWith("/StatFin__vaerak/11rc.px/"),
+    "rakenne: tilasto (aika, sarakkeet, rivit, taulukon linkki)",
+  );
+  const v1 = await tool("tilasto", { taulukko: "huono" });
+  const v2 = await tool("tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "*", Ikä: "*", Sukupuoli: "*" } });
+  const v3 = await tool("etsi_toimiala", { hakusana: "a" });
+  check(v1.sc?.virhe?.koodi === "syote" && v2.sc?.virhe?.koodi === "syote" && v2.text.includes("enintään 3000") && v3.sc?.virhe?.koodi === "syote" && v3.sc.virhe.viesti === v3.text, "rakenne: virhekoodit (syote)");
+}
+
 // Virhetekstit (22.11.2026): odottamattoman poikkeuksen teksti ei näy vastauksessa eikä lokissa;
 // tarkoitukselliset virheet (syötteen muoto, lähteen tila, NaytettavaVirhe) näkyvät yhä.
 // Lopussa, koska vale-fetch voisi jättää isolaatin muistiin tyhjiä tuloksia muille testeille.
@@ -257,7 +324,13 @@ for (const [name, args, pred, maxFetch] of cases) {
     const meta = { title: "Koe", variables: [{ code: "Vuosi", text: "Vuosi", values: ["2024"], valueTexts: ["2024"], time: true }] };
     globalThis.fetch = async () => new Response(JSON.stringify(meta), { status: 200 });
     const n = await tool("tilasto", { taulukko: "vaerak/koe1", valinnat: { Tuntematon: "1" } });
-    check(n.isError && n.text.includes('Muuttujaa "Tuntematon" ei ole taulukossa'), "virheteksti: NaytettavaVirhe (StatFinin valintavirhe) näkyy yhä");
+    check(n.isError && n.text.includes('Muuttujaa "Tuntematon" ei ole taulukossa') && n.sc?.virhe?.koodi === "syote", "virheteksti: NaytettavaVirhe (StatFinin valintavirhe) näkyy yhä, koodi syote");
+    globalThis.fetch = async () => new Response("", { status: 503 });
+    const h = await tool("hae_tilastoja", { hakusana: "lähdevirhekoe" });
+    check(h.isError && h.text.includes("Tietolähteen haku epäonnistui: Lähde vastasi 503") && h.sc?.virhe?.koodi === "lahde" && h.sc.virhe.lahteen_koodi === "503", "virheteksti: lähteen tila rakenteisena (lahde, 503)");
+    globalThis.fetch = async () => ({ ok: true, status: 200, headers: new Headers(), text: async () => { throw new Error(SALAISUUS); } });
+    const x = await tool("tilasto", { taulukko: "koe/salainen1" });
+    check(x.isError && x.text.includes("Haku epäonnistui") && x.sc?.virhe?.koodi === "yleinen" && !JSON.stringify(x).includes(SALAISUUS), "virheteksti: rakenteinen virhe ei paljasta sisäistä tekstiä (yleinen)");
   } finally {
     globalThis.fetch = orig;
     console.error = origErr;
