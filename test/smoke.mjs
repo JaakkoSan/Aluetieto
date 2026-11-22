@@ -1,5 +1,6 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
 import worker from "../src/index.js";
+import pkg from "../package.json" with { type: "json" };
 import { cellText, resolveOccupation } from "../src/tyonv.js";
 import * as kal from "../src/kalenteri.js";
 
@@ -32,7 +33,7 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.3" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === pkg.version && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
 // Claude-asiakkaat katkaisevat palvelinohjeen noin 4 096 merkin kohdalta.
 check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä (${init.result.instructions.length})`);
 const list = await rpc("tools/list", {});

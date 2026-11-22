@@ -6,9 +6,11 @@
 // metatiedot tai yhden vuoden dataa, ja dataa haetaan uudelleen vain, jos THL on päivittänyt sitä.
 
 import { NaytettavaVirhe } from "./http.js";
+import { userAgent } from "./mcp-runko.js";
+import pkg from "../package.json" with { type: "json" };
 
 const API = "https://sotkanet.fi/rest/1.1";
-const USER_AGENT = "aluetieto-mcp/1.1 (Claude-liitin; viikoittainen paivitys)";
+const USER_AGENT = userAgent("aluetieto", pkg.version, "ajastettu paivitys");
 const RECHECK_DAYS = 7;
 const YEARS_BACK = 6;
 const REGION_CATEGORIES = ["KUNTA", "HYVINVOINTIALUE", "MAAKUNTA", "SEUTUKUNTA", "MAA"];

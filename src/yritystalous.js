@@ -6,11 +6,10 @@
 //    maksuunpannut verot, veronpalautus ja jäännösvero yhteisöittäin, vuosittaiset CSV-tiedostot
 //    (https://www.vero.fi/avoindata) ladataan ajastetusti D1-kantaan (EU-lainkäyttöalue).
 
-import { fetchJson, HttpError, NaytettavaVirhe } from "./http.js";
+import { fetchJson, HttpError, NaytettavaVirhe, USER_AGENT } from "./http.js";
 import { MC_LABELS } from "./sbrLabels.js";
 
 const XBRL = "https://avoindata.prh.fi/opendata-xbrl-api/v3";
-const USER_AGENT = "aluetieto-mcp/1.3 (Claude-liitin; Cloudflare Worker)";
 
 // ---------- PRH: digitaaliset tilinpäätökset ----------
 
