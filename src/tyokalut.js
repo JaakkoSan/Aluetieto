@@ -486,7 +486,7 @@ export const TYOKALUT = [
           },
           "Voimassa olevat rekisterimerkinnät.",
         ),
-        paivitetty: taiNull({ type: "string" }, "Päivitetty YTJ:ssä (VVVV-KK-PP)."),
+        paivitetty: taiNull({ type: "string" }, "Viimeisin muutos YTJ:ssä lähteen aikaleimana (VVVV-KK-PPTHH:MM:SS; tekstissä vain päivä)."),
         linkki: mj("Yrityksen sivu YTJ:n tietopalvelussa."),
         kattavuus: KATTAVUUS,
         lahde: LAHDE_SKEEMA,
