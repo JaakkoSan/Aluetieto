@@ -57,6 +57,7 @@ const palvelin = luoPalvelin({
   // Julkinen liitin: /mcp ilman salaisuutta. Jos MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> (ks. lisareitit).
   polku: { julkinen: true },
   // Julkinen /mcp ilman tunnistusta: työkalulista saa olla jaetussa välimuistissa (2026-07-28).
+  // Jos MCP_PATH_SECRET otetaan käyttöön, cacheScope vaihdetaan arvoon "private".
   listaValimuisti: { cacheScope: "public" },
   juuriteksti: "Aluetieto MCP -palvelin. Ei julkista sisältöä.\n",
   rajat: rajoissa,
