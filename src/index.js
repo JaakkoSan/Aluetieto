@@ -1,7 +1,7 @@
 // Aluetieto MCP -palvelin Cloudflare Workersissa (Streamable HTTP, tilaton, JSON-vastaukset).
 //
 // Runko (polun tarkistus, Origin, protokolla, JSON-RPC, käyttörajojen vastaus) on yhteisessä mcp-runko.js:ssä
-// (kopio mcp-runko-reposta, ei muokata tässä repossa). Työkalut ja niiden virheiden käsittely ovat src/tools.js:ssä
+// (kopio yhteisestä rungosta, ei muokata tässä repossa). Työkalut ja niiden virheiden käsittely ovat src/tools.js:ssä
 // (callTool), ajastetut eräpäivitykset alla (scheduled).
 
 import { TOOLS, callTool } from "./tools.js";
