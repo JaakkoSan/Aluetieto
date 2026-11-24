@@ -1,6 +1,7 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
 import worker, { ASETUKSET } from "../src/index.js";
 import { luoPalvelin } from "../src/mcp-runko.js";
+import pkg from "../package.json" with { type: "json" };
 import { cellText, resolveOccupation } from "../src/tyonv.js";
 import * as kal from "../src/kalenteri.js";
 
@@ -33,7 +34,7 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.15.0" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === pkg.version && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
 // Claude-asiakkaat katkaisevat palvelinohjeen noin 4 096 merkin kohdalta.
 check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä (${init.result.instructions.length})`);
 const list = await rpc("tools/list", {});
@@ -308,4 +309,17 @@ for (const [name, args, pred, maxFetch] of cases) {
   check(!p.isError && ps.katkaistu === true && ps.naytetty === ps.rivit.length && ps.naytetty < ps.rivit_yhteensa && p.content[0].text.includes("Tuloste katkaistu") && p.content[0].text.includes(`\n${viimRivi}`) && JSON.stringify(ps).length < 100000, `rakenteinen: tilasto rajattu tekstin rajaan (${ps?.naytetty}/${ps?.rivit_yhteensa})`);
   const t = await kutsu("tilasto", { taulukko: "huono" });
   check(t.isError && t.content[0].text.includes("alue/taulukko"), "rakenteinen: liittimen syötevirheen teksti ennallaan");
+}
+
+// Salainen polku: kun MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> vastaa (sama kuin ennen runkoa).
+{
+  const S = "testisalaisuus-123456";
+  const pyynto = (polku) => new Request(`https://example.test${polku}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method: "tools/list", params: {} }),
+  });
+  const julkinen = await worker.fetch(pyynto("/mcp"), { MCP_PATH_SECRET: S });
+  const salainen = await worker.fetch(pyynto(`/mcp/${S}`), { MCP_PATH_SECRET: S });
+  check(julkinen.status === 404 && salainen.status === 200, `salainen polku: /mcp ${julkinen.status}, /mcp/<salaisuus> ${salainen.status}`);
 }

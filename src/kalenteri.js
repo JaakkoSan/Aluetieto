@@ -1,6 +1,6 @@
 // Markkinointikalenteri: pyhä-, juhla-, liputus- ja teemapäivät, kaupalliset sesongit, kesäaika ja koululomat.
 // Staattinen taulukko ja laskusäännöt ilman ajonaikaisia hakuja (käyttäjän päätös 13.11.2026).
-// Suunnitelma: Liittimet/suunnitelmat/markkinointikalenteri.md. Vuosittainen ylläpito: ks. PROJECT.md.
+// Vuosittainen ylläpito: ks. PROJECT.md.
 //
 // Päivämäärät käsitellään UTC-keskiyön Date-olioina, joten aikavyöhyke ei vaikuta laskuun.
 

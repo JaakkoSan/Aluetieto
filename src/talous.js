@@ -12,7 +12,7 @@
 // Euribor ei ole mukana: EKP:n Euribor-sarjat ovat Refinitivin toimittamaa kolmannen
 // osapuolen dataa, jonka uudelleenkäyttö vaatii tuottajan luvan.
 
-import { fetchJson, HttpError } from "./http.js";
+import { fetchJson, HttpError, userAgent } from "./http.js";
 
 const KHI = "https://pxdata.stat.fi/PxWeb/api/v1/fi/StatFin/khi";
 const ECB = "https://data-api.ecb.europa.eu/service/data/FM";
@@ -116,7 +116,7 @@ async function fetchCsv(url, ttl) {
   let last;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch(url, { headers: { Accept: "text/csv", "User-Agent": "aluetieto-mcp/1.0 (Claude-liitin; Cloudflare Worker)" } });
+      const res = await fetch(url, { headers: { Accept: "text/csv", "User-Agent": userAgent() } });
       if (res.ok) {
         const text = await res.text();
         if (cache) await cache.put(key, new Response(text, { headers: { "Content-Type": "text/csv", "Cache-Control": `max-age=${ttl}` } }));

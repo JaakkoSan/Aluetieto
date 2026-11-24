@@ -43,9 +43,13 @@ export const ASETUKSET = {
   tools: TOOLS,
   callTool: (nimi, args, env) => callTool(nimi, args, env),
   tyokalut: TYOKALUT,
-  // Julkinen /mcp (avoin data). Jos MCP_PATH_SECRET on asetettu, myös /mcp/<salaisuus> vastaa.
+  // Julkinen /mcp (avoin data). Jos MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> vastaa (ks. lisareitit).
   polku: { julkinen: true },
+  // Kun salainen polku on asetettu, julkinen /mcp ei vastaa (sama kuin ennen runkoa).
+  lisareitit: async (request, env) =>
+    env?.MCP_PATH_SECRET && new URL(request.url).pathname === "/mcp" ? new Response("Not found", { status: 404 }) : null,
   // Julkinen lista ilman tunnistusta: jaettu välimuisti saa tarjota sen kenelle tahansa (rungon README).
+  // Jos MCP_PATH_SECRET otetaan käyttöön, cacheScope vaihdetaan arvoon "private".
   listaValimuisti: { cacheScope: "public" },
   juuriteksti: "Aluetieto MCP -palvelin. Ei julkista sisältöä.\n",
   // Käyttörajoitus (Cloudflare Rate Limiting -sidonnat, ks. wrangler.jsonc): SESSION_LIMITER työkalukutsut per
