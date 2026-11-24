@@ -122,6 +122,7 @@ export function address(c) {
       .filter(Boolean)
       .join(", "),
     postCode: a.postCode ?? null,
+    city: city || null,
     municipalityCode: (a.postOffices ?? [])[0]?.municipalityCode ?? null,
   };
 }

@@ -1,7 +1,9 @@
 // MCP-työkalut: määrittelyt ja toteutukset.
 
 import { BudgetError, HttpError, NaytettavaVirhe, newBudget } from "./http.js";
+import { tyokalu, sivutieto, LAHDE_SKEEMA, NaytettavaVirhe as RunkoVirhe } from "./mcp-runko.js";
 import {
+  searchUrl,
   searchCompanies,
   searchAll,
   currentName,
@@ -19,7 +21,7 @@ import { postAreas, areasOfMunicipality, population, establishments, establishme
 import { TOL2025 } from "./tol2025.js";
 import { seriesInfo, indexSeries, khiAnnualChange, parsePeriod, periodLabel, yearBefore, ecbRates, rateOn, referenceRate, periodStart, periodEnd, FIRST_REFERENCE_PERIOD } from "./talous.js";
 import { financialPeriods, financialStatement, mcLabel, PL_MAIN, BS_MAIN, veroLoaded, veroForCompany, veroTop, veroKunta } from "./yritystalous.js";
-import { searchTables, parseTableId, tableMeta, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
+import { searchTables, parseTableId, tableMeta, tableUrl, buildQuery, runQuery, rowsOf, STATFIN_SOURCE } from "./statfin.js";
 import { resolvePtvArea, servicesInArea, service, channels, channelText, serviceSummary, PTV_SOURCE } from "./ptv.js";
 import { haversineKm, bboxAround, summarize, postalCenter, SAAV_SOURCE } from "./saavutettavuus.js";
 import { companyNotices, searchNotices, resolveTopic, resolveNoticeType, entryText, ytjWebUrl, NOTICE_TYPES, PAGE_SIZE, KREK_SOURCE } from "./krek.js";
@@ -59,7 +61,9 @@ const areaProps = {
   kunta: { type: "string", description: "Kunnan nimi, esim. \"Kotka\". Käytetään, jos postinumeroita ei anneta." },
 };
 
-export const TOOLS = [
+// Kaikkien työkalujen kuvaukset ja syötteet. Rakenteisen tuloksen työkalut (RAKENTEISET) rakennetaan rungon
+// tyokalu()-apurilla samoista kuvauksista (TYOKALUT, tiedoston lopussa); muut ovat vanhoja määrittelyjä (TOOLS + callTool).
+const MAARITTELYT = [
   {
     name: "etsi_toimiala",
     description:
@@ -521,7 +525,7 @@ const TITLES = {
   tulevat_paivat: "Tulevat päivät (markkinointikalenteri)",
   koululomat: "Koululomat kunnittain",
 };
-for (const t of TOOLS) {
+for (const t of MAARITTELYT) {
   t.annotations = {
     title: TITLES[t.name] ?? t.name,
     readOnlyHint: true,
@@ -531,6 +535,10 @@ for (const t of TOOLS) {
     openWorldHint: !["tulevat_paivat", "koululomat"].includes(t.name),
   };
 }
+
+// Koodiajo-valmius (keskusrepon linjaus): nämä työkalut palauttavat tekstin rinnalla rakenteisen tuloksen.
+const RAKENTEISET = ["etsi_toimiala", "hae_yrityksia", "tilasto"];
+export const TOOLS = MAARITTELYT.filter((t) => !RAKENTEISET.includes(t.name));
 
 // ---------- Apufunktiot ----------
 
@@ -621,20 +629,65 @@ function companyLine(c) {
 
 // ---------- Toteutukset ----------
 
-async function etsiToimiala(args) {
+// Rakenteisen tuloksen työkalut: haku (data) ja muotoilu (teksti) erikseen. Teksti on sama kuin ennen rakenteista
+// tulosta; data annetaan structuredContentina (koodiajo-valmius, kohdat 1–3).
+
+const TOL_LAHDE = { nimi: "Tilastokeskus, toimialaluokitus TOL 2025" };
+
+async function etsiToimialaData(args) {
   const q = String(args.hakusana ?? "").trim().toLowerCase();
   if (q.length < 2) throw new UserError("Anna vähintään 2 merkkiä.");
   const isCode = /^\d+$/.test(q);
   const hits = TOL2025.filter((r) => (isCode ? r[0].startsWith(q) : r[2].toLowerCase().includes(q)) && /^\d+$/.test(r[0]));
-  if (!hits.length) return `Ei osumia hakusanalle "${args.hakusana}".`;
-  const lines = hits.slice(0, 40).map((r) => `${"  ".repeat(Math.max(0, r[1] - 2))}${r[0]} ${r[2]}`);
-  let out = `Toimialaluokitus TOL 2025, osumat (${hits.length}${hits.length > 40 ? ", näytetään 40" : ""}):\n` + lines.join("\n");
+  return {
+    hakusana: String(args.hakusana),
+    yhteensa: hits.length,
+    osumat: hits.slice(0, 40).map((r) => ({ koodi: r[0], nimi: r[2], taso: r[1] })),
+    lahde: TOL_LAHDE,
+  };
+}
+
+function etsiToimialaTeksti(d) {
+  if (!d.yhteensa) return `Ei osumia hakusanalle "${d.hakusana}".`;
+  const lines = d.osumat.map((o) => `${"  ".repeat(Math.max(0, o.taso - 2))}${o.koodi} ${o.nimi}`);
+  let out = `Toimialaluokitus TOL 2025, osumat (${d.yhteensa}${d.yhteensa > 40 ? ", näytetään 40" : ""}):\n` + lines.join("\n");
   out += "\n\nYTJ-haussa koodin alku kattaa alaluokat (esim. 962 = kampaamot, kauneudenhoito ja kylpylät).";
-  out += "\nLähde: Tilastokeskus, toimialaluokitus TOL 2025.";
+  out += `\nLähde: ${d.lahde.nimi}.`;
   return out;
 }
 
-async function haeYrityksia(args) {
+/** YTJ:n yritys rakenteisena (kentät vain, kun tieto on). */
+function yritysData(c) {
+  const bl = businessLine(c);
+  const a = address(c);
+  const sit = situations(c);
+  const y = { nimi: currentName(c), y_tunnus: c.businessId?.value ?? "", toimiva: isActive(c) };
+  const muoto = companyForm(c);
+  if (muoto) y.yritysmuoto = muoto;
+  if (bl) y.toimiala = bl.name ? { koodi: bl.code, nimi: bl.name } : { koodi: bl.code };
+  if (a?.text) y.osoite = a.text;
+  if (a?.postCode) y.postinumero = a.postCode;
+  if (a?.city) y.postitoimipaikka = a.city;
+  if (c.registrationDate) y.rekisteroity = c.registrationDate;
+  if (!y.toimiva) y.tila = statusText(c);
+  if (sit.length) y.tilanteet = sit;
+  return y;
+}
+
+/** Sama rivi kuin companyLine, rakenteisesta yrityksestä. */
+function yritysRivi(y) {
+  const parts = [
+    `${y.nimi} (${y.y_tunnus})`,
+    y.yritysmuoto,
+    y.toimiala ? `${y.toimiala.koodi} ${y.toimiala.nimi ?? null}` : null,
+    y.osoite,
+    y.toimiva ? null : y.tila,
+    y.tilanteet?.length ? y.tilanteet.join(", ") : null,
+  ].filter(Boolean);
+  return "- " + parts.join(" | ");
+}
+
+async function haeYrityksiaData(args) {
   const budget = newBudget();
   const ind = args.toimiala ? resolveIndustry(args.toimiala) : null;
   const params = {
@@ -653,15 +706,30 @@ async function haeYrityksia(args) {
   const { total, companies } = await searchCompanies(params, { budget });
   const onlyActive = args.vain_toimivat !== false;
   const list = onlyActive ? companies.filter(isActive) : companies;
-  const pages = Math.ceil(total / 100);
+  // YTJ sivuttaa lähteellä (100 yritystä/sivu) ja suodatus toimiviin tehdään sivun sisällä, joten yhteensa on
+  // hakuehtojen kaikki yritykset (myös lakanneet) eikä vastaa yritykset-listan pituutta.
+  const data = {
+    ...(ind ? { toimiala: ind.name ? { koodi: ind.code, nimi: ind.name } : { koodi: ind.code } } : {}),
+    ...sivutieto({ sivu: params.page, sivuja: Math.max(Math.ceil(total / 100), 1), yhteensa: total }),
+    vain_toimivat: onlyActive,
+    yritykset: list.map(yritysData),
+    huomio: YTJ_NOTE,
+    lahde: { nimi: "Patentti- ja rekisterihallitus, YTJ avoin data", linkki: searchUrl(params) },
+  };
+  return data;
+}
+
+function haeYrityksiaTeksti(d) {
+  const ind = d.toimiala;
+  const pages = Math.ceil(d.yhteensa / 100);
   const head = [
-    `YTJ-haku${ind ? `, toimiala ${ind.code}${ind.name ? ` ${ind.name}` : ""}` : ""}: ${fmt(total)} yritystä hakuehdoilla, sivu ${params.page}/${Math.max(pages, 1)}.`,
-    onlyActive ? `Tällä sivulla toimivia: ${list.length} (lakanneet ja poistetut jätetty pois).` : `Tällä sivulla: ${list.length}.`,
+    `YTJ-haku${ind ? `, toimiala ${ind.koodi}${ind.nimi ? ` ${ind.nimi}` : ""}` : ""}: ${fmt(d.yhteensa)} yritystä hakuehdoilla, sivu ${d.sivu}/${Math.max(pages, 1)}.`,
+    d.vain_toimivat ? `Tällä sivulla toimivia: ${d.yritykset.length} (lakanneet ja poistetut jätetty pois).` : `Tällä sivulla: ${d.yritykset.length}.`,
   ];
-  const lines = list.map(companyLine);
+  const lines = d.yritykset.map(yritysRivi);
   let out = head.join("\n") + "\n\n" + (lines.length ? lines.join("\n") : "(ei yrityksiä)");
-  if (params.page < pages) out += `\n\nLisää tuloksia: sivu ${params.page + 1}.`;
-  out += `\n\n${YTJ_NOTE}\nLähde: Patentti- ja rekisterihallitus, YTJ avoin data.`;
+  if (d.sivu < pages) out += `\n\nLisää tuloksia: sivu ${d.sivu + 1}.`;
+  out += `\n\n${d.huomio}\nLähde: ${d.lahde.nimi}.`;
   return clip(out);
 }
 
@@ -1278,7 +1346,7 @@ const fmtNum = (v) => {
   return i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d ? `,${d}` : "");
 };
 
-async function tilasto(args) {
+async function tilastoData(args) {
   const id = asTableId(args.taulukko);
   const budget = newBudget(3);
   const meta = await tableMeta(id, budget);
@@ -1294,29 +1362,52 @@ async function tilasto(args) {
   const { dims, rows } = rowsOf(ds);
   const fixed = dims.filter((d) => d.codes.length === 1);
   const varying = dims.map((d, i) => ({ d, i })).filter(({ d }) => d.codes.length > 1);
-  const out = [`${id.area}/${id.table}: ${meta.title}`];
-  if (ds.updated) out.push(`Päivitetty: ${fmtDate(ds.updated)}`);
-  if (fixed.length) out.push(`Rajaus: ${fixed.map((d) => `${d.label} = ${d.labels[0]}`).join("; ")}`);
-  if (built.notes.length) out.push(`Oletusvalinnat: ${built.notes.join("; ")}`);
+  const data = { taulukko: `${id.area}/${id.table}`, otsikko: meta.title };
+  if (ds.updated) data.paivitetty = String(ds.updated);
+  data.rajaus = fixed.map((d) => ({ muuttuja: d.label, arvo: d.labels[0] }));
+  data.oletusvalinnat = built.notes;
   const ud = dims.find((d) => d.unit);
+  data.yksikot = [];
   if (ud) {
     const u = ud.codes
-      .map((k, i) => ({ name: ud.labels[i], label: ud.unit[k]?.label }))
-      .filter((x) => x.label && String(x.label).trim());
-    if (u.length && u.length <= 10) out.push(`Yksiköt: ${u.map((x) => `${x.name}: ${x.label}`).join("; ")}`);
+      .map((k, i) => ({ nimi: ud.labels[i], yksikko: ud.unit[k]?.label }))
+      .filter((x) => x.yksikko && String(x.yksikko).trim())
+      .map((x) => ({ nimi: x.nimi, yksikko: String(x.yksikko) }));
+    if (u.length && u.length <= 10) data.yksikot = u;
   }
-  out.push("");
-  if (varying.length) out.push(varying.map(({ d }) => d.label).join(" | ") + " : arvo");
-  for (const r of rows) {
-    const lab = varying.map(({ i }) => r.labels[i]).join(" | ");
-    out.push(`${lab || "Arvo"}: ${fmtNum(r.value)}${r.status ? ` (${r.status})` : ""}`);
-  }
+  // Rivit: tekstit-listan järjestys = muuttujat-listan järjestys (vain muuttujat, joilla on useampi arvo).
+  data.muuttujat = varying.map(({ d }) => ({ nimi: d.label, koodi: d.id, aika: !!meta.variables.find((v) => v.code === d.id)?.time }));
+  data.rivit = rows.map((r) => {
+    const rivi = { tekstit: varying.map(({ i }) => r.labels[i]) };
+    if (typeof r.value === "number" && Number.isFinite(r.value)) rivi.arvo = r.value;
+    else if (r.value !== null && r.value !== undefined) rivi.arvo_teksti = String(r.value);
+    if (r.status) rivi.tila = String(r.status);
+    return rivi;
+  });
   const notes = ds.note ?? [];
-  const clean = notes
+  data.huomiot = notes
     .map((n) => String(n).replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
-    .filter((n) => n.length > 2);
-  if (clean.length) out.push("", ...clean.slice(0, 5).map((n) => `Huom: ${n.slice(0, 400)}`));
-  out.push("", `".." = tieto puuttuu tai on salassa pidettävä. ${STATFIN_SOURCE}, taulukko ${id.area}/${id.table}.`);
+    .filter((n) => n.length > 2)
+    .slice(0, 5)
+    .map((n) => n.slice(0, 400));
+  data.lahde = { nimi: STATFIN_SOURCE.replace(/^Lähde: /, ""), linkki: tableUrl(id) };
+  return data;
+}
+
+function tilastoTeksti(d) {
+  const out = [`${d.taulukko}: ${d.otsikko}`];
+  if (d.paivitetty) out.push(`Päivitetty: ${fmtDate(d.paivitetty)}`);
+  if (d.rajaus.length) out.push(`Rajaus: ${d.rajaus.map((r) => `${r.muuttuja} = ${r.arvo}`).join("; ")}`);
+  if (d.oletusvalinnat.length) out.push(`Oletusvalinnat: ${d.oletusvalinnat.join("; ")}`);
+  if (d.yksikot.length) out.push(`Yksiköt: ${d.yksikot.map((x) => `${x.nimi}: ${x.yksikko}`).join("; ")}`);
+  out.push("");
+  if (d.muuttujat.length) out.push(d.muuttujat.map((m) => m.nimi).join(" | ") + " : arvo");
+  for (const r of d.rivit) {
+    const lab = r.tekstit.join(" | ");
+    out.push(`${lab || "Arvo"}: ${fmtNum(r.arvo ?? r.arvo_teksti ?? null)}${r.tila ? ` (${r.tila})` : ""}`);
+  }
+  if (d.huomiot.length) out.push("", ...d.huomiot.map((n) => `Huom: ${n}`));
+  out.push("", `".." = tieto puuttuu tai on salassa pidettävä. Lähde: ${d.lahde.nimi}, taulukko ${d.taulukko}.`);
   return clip(out.join("\n"));
 }
 
@@ -2525,8 +2616,6 @@ async function avoimetTyopaikat(args) {
 }
 
 const HANDLERS = {
-  etsi_toimiala: etsiToimiala,
-  hae_yrityksia: haeYrityksia,
   yrityksen_tiedot: yrityksenTiedot,
   alueen_vaesto: alueenVaesto,
   aluetarkistus,
@@ -2540,7 +2629,6 @@ const HANDLERS = {
   yhteisoverot,
   hae_tilastoja: haeTilastoja,
   tilaston_rakenne: tilastonRakenne,
-  tilasto,
   hae_julkisia_palveluja: haeJulkisiaPalveluja,
   julkinen_palvelu: julkinenPalvelu,
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
@@ -2564,24 +2652,163 @@ export async function callTool(name, args = {}, env = {}) {
     const text = await fn(args ?? {}, env);
     return { content: [{ type: "text", text }] };
   } catch (e) {
-    const msg =
-      e instanceof UserError
-        ? e.message
-        : e instanceof BudgetError
-          ? "Haku olisi vaatinut liian monta pyyntöä kerralla. Rajaa aluetta tai toimialaa."
-          : e instanceof HttpError
-            ? `Tietolähteen haku epäonnistui: ${e.message}. Yritä hetken päästä uudelleen.`
-            : e instanceof NaytettavaVirhe
-              ? e.message
-              : null;
-    if (msg === null) {
+    const v = naytettava(e);
+    if (v === null) {
       // Odottamaton poikkeus: sisäistä tekstiä ei näytetä eikä kirjata (voi sisältää rajapintojen tai kannan tietoja).
       console.error("tyokalu:", name, e?.name ?? "virhe");
       return { isError: true, content: [{ type: "text", text: YLEINEN_VIRHE }] };
     }
-    return { isError: true, content: [{ type: "text", text: msg }] };
+    return { isError: true, content: [{ type: "text", text: v.teksti }] };
   }
 }
+
+/** Käyttäjälle näytettävä virhe ja sen rungon virhekoodi, tai null (odottamaton poikkeus, teksti piilotetaan). */
+function naytettava(e) {
+  if (e instanceof UserError) return { teksti: e.message, koodi: "syote" };
+  if (e instanceof BudgetError) return { teksti: "Haku olisi vaatinut liian monta pyyntöä kerralla. Rajaa aluetta tai toimialaa.", koodi: "raja" };
+  if (e instanceof HttpError) return { teksti: `Tietolähteen haku epäonnistui: ${e.message}. Yritä hetken päästä uudelleen.`, koodi: "lahde" };
+  if (e instanceof NaytettavaVirhe) return { teksti: e.message, koodi: "lahde" };
+  return null;
+}
+
+// ---------- Rakenteisen tuloksen työkalut (mcp-runko tyokalu()) ----------
+
+/** hae-kuori: liittimen virheluokat rungon NaytettavaVirhe-virheiksi (sama teksti, koneluettava koodi). */
+const virheet = (hae) => async (args, env) => {
+  try {
+    return await hae(args ?? {}, env);
+  } catch (e) {
+    const v = naytettava(e);
+    if (v === null) throw e; // runko piilottaa tekstin ja kirjaa vain työkalun ja virheen nimen
+    throw new RunkoVirhe(v.teksti, v.koodi);
+  }
+};
+
+const NIMI_KOODI = { type: "object", properties: { koodi: { type: "string" }, nimi: { type: "string" } }, required: ["koodi"] };
+const VALINNAINEN_SIVU = { anyOf: [{ type: "integer" }, { type: "null" }] };
+
+const RAKENNE = {
+  etsi_toimiala: {
+    hae: etsiToimialaData,
+    teksti: etsiToimialaTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        hakusana: { type: "string" },
+        yhteensa: { type: "integer", description: "Osumia yhteensä; osumat-listassa enintään 40." },
+        osumat: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { koodi: { type: "string" }, nimi: { type: "string" }, taso: { type: "integer", description: "Koodin pituus (2–5)." } },
+            required: ["koodi", "nimi", "taso"],
+          },
+        },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["hakusana", "yhteensa", "osumat", "lahde"],
+    },
+  },
+  hae_yrityksia: {
+    hae: haeYrityksiaData,
+    teksti: haeYrityksiaTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        toimiala: NIMI_KOODI,
+        sivu: { type: "integer" },
+        sivuja: { type: "integer" },
+        yhteensa: { type: "integer", description: "Hakuehtojen kaikki yritykset YTJ:ssä, myös lakanneet (lähteen sivutus 100/sivu)." },
+        seuraava: VALINNAINEN_SIVU,
+        vain_toimivat: { type: "boolean" },
+        yritykset: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              nimi: { type: "string" },
+              y_tunnus: { type: "string" },
+              toimiva: { type: "boolean" },
+              yritysmuoto: { type: "string" },
+              toimiala: NIMI_KOODI,
+              osoite: { type: "string" },
+              postinumero: { type: "string" },
+              postitoimipaikka: { type: "string" },
+              rekisteroity: { type: "string", description: "Rekisteröintipäivä vvvv-kk-pp." },
+              tila: { type: "string" },
+              tilanteet: { type: "array", items: { type: "string" } },
+            },
+            required: ["nimi", "y_tunnus", "toimiva"],
+          },
+        },
+        huomio: { type: "string" },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["sivu", "sivuja", "yhteensa", "seuraava", "vain_toimivat", "yritykset", "huomio", "lahde"],
+    },
+  },
+  tilasto: {
+    hae: tilastoData,
+    teksti: tilastoTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        taulukko: { type: "string" },
+        otsikko: { type: "string" },
+        paivitetty: { type: "string" },
+        rajaus: {
+          type: "array",
+          items: { type: "object", properties: { muuttuja: { type: "string" }, arvo: { type: "string" } }, required: ["muuttuja", "arvo"] },
+        },
+        oletusvalinnat: { type: "array", items: { type: "string" } },
+        yksikot: {
+          type: "array",
+          items: { type: "object", properties: { nimi: { type: "string" }, yksikko: { type: "string" } }, required: ["nimi", "yksikko"] },
+        },
+        muuttujat: {
+          type: "array",
+          description: "Muuttujat, joilla on useampi arvo; rivien tekstit samassa järjestyksessä.",
+          items: {
+            type: "object",
+            properties: { nimi: { type: "string" }, koodi: { type: "string" }, aika: { type: "boolean" } },
+            required: ["nimi", "koodi", "aika"],
+          },
+        },
+        rivit: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              tekstit: { type: "array", items: { type: "string" } },
+              arvo: { type: "number", description: "Puuttuu, kun tieto puuttuu tai on salassa pidettävä." },
+              arvo_teksti: { type: "string" },
+              tila: { type: "string", description: "Tilastokeskuksen merkintä, esim. \"..\"." },
+            },
+            required: ["tekstit"],
+          },
+        },
+        huomiot: { type: "array", items: { type: "string" } },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["taulukko", "otsikko", "rajaus", "oletusvalinnat", "yksikot", "muuttujat", "rivit", "huomiot", "lahde"],
+    },
+  },
+};
+
+export const TYOKALUT = MAARITTELYT.filter((t) => RAKENTEISET.includes(t.name)).map((t) => {
+  const r = RAKENNE[t.name];
+  return tyokalu({
+    nimi: t.name,
+    otsikko: t.annotations.title,
+    kuvaus: t.description,
+    syote: t.inputSchema,
+    oikeus: "luku",
+    avoin: t.annotations.openWorldHint,
+    tulosSkeema: r.tulosSkeema,
+    hae: virheet(r.hae),
+    teksti: r.teksti,
+  });
+});
 
 // ---------- Markkinointikalenteri (src/kalenteri.js) ----------
 

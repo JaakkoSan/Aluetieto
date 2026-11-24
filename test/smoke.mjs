@@ -1,5 +1,6 @@
 // Savutesti oikeita lähteitä (YTJ, Tilastokeskus, ePerusteet ym.) vasten. Ajo: node test/smoke.mjs [-v]
-import worker from "../src/index.js";
+import worker, { ASETUKSET } from "../src/index.js";
+import { luoPalvelin } from "../src/mcp-runko.js";
 import { cellText, resolveOccupation } from "../src/tyonv.js";
 import * as kal from "../src/kalenteri.js";
 
@@ -32,7 +33,7 @@ function check(cond, label) {
 }
 
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } });
-check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.14.3" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
+check(init.result?.serverInfo?.name === "aluetieto" && init.result.serverInfo.version === "1.15.0" && init.result.instructions.includes("tutkinnon_osaaminen") && init.result.instructions.includes("avoimet_tyopaikat") && init.result.instructions.includes("tulevat_paivat"), "initialize");
 // Claude-asiakkaat katkaisevat palvelinohjeen noin 4 096 merkin kohdalta.
 check(init.result.instructions.length < 4000, `palvelinohje alle 4 000 merkkiä (${init.result.instructions.length})`);
 const list = await rpc("tools/list", {});
@@ -263,4 +264,36 @@ for (const [name, args, pred, maxFetch] of cases) {
   }
   const u = await tool("yrityksen_tiedot", { y_tunnus: "abc" });
   check(u.isError && u.text.includes("Anna y-tunnus muodossa"), "virheteksti: syötteen muotovirhe näkyy yhä");
+}
+
+// Rakenteinen tulos (koodiajo-valmius): rungon testitila tarkistaa structuredContentin tulosSkeemaa vasten ja vaatii
+// lahde.nimen; poikkeama heittää, jolloin testi kaatuu.
+{
+  const varoitukset = [];
+  const testi = luoPalvelin({ ...ASETUKSET, tarkistaTulokset: true, varoita: (v) => varoitukset.push(v) });
+  const kutsu = async (name, args) => {
+    const req = new Request("https://example.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: { name, arguments: args } }),
+    });
+    return (await (await testi.fetch(req, ENV)).json()).result;
+  };
+  const lista = (await rpc("tools/list", {})).result.tools;
+  const rakenteiset = lista.filter((t) => t.outputSchema).map((t) => t.name).sort();
+  check(JSON.stringify(rakenteiset) === '["etsi_toimiala","hae_yrityksia","tilasto"]', `rakenteinen: outputSchema kolmella työkalulla (${rakenteiset.join(", ")})`);
+  check(!varoitukset.length, `rakenteinen: ei testitilan varoituksia${varoitukset.length ? ` (${varoitukset.join("; ")})` : ""}`);
+  const e = await kutsu("etsi_toimiala", { hakusana: "962" });
+  check(!e.isError && e.structuredContent.osumat.some((o) => o.koodi === "96220" && o.taso === 5) && e.content[0].text.includes("96220 Kauneudenhoitopalvelut"), "rakenteinen: etsi_toimiala osumat ja teksti");
+  const y = await kutsu("hae_yrityksia", { toimiala: "96220", paikkakunta: "Kotka" });
+  const ys = y.structuredContent;
+  check(!y.isError && ys.yritykset.length > 0 && ys.yritykset.every((x) => x.y_tunnus && x.toimiva) && ys.lahde.linkki.startsWith("https://avoindata.prh.fi/") && ys.seuraava === null, "rakenteinen: hae_yrityksia yritykset, lähde ja sivutus");
+  check(y.content[0].text.split("\n").filter((l) => l.startsWith("- ")).length === ys.yritykset.length, "rakenteinen: hae_yrityksia tekstin rivit = yritykset");
+  const s = await kutsu("tilasto", { taulukko: "vaerak/11rc", valinnat: { Vuosi: "2024", Ikä: ["75 - 79", "80 - 84", "85 -"] } });
+  const ss = s.structuredContent;
+  check(!s.isError && ss.rivit.length === 3 && ss.rivit.some((r) => r.tekstit[0] === "75 - 79" && r.arvo === 310766) && ss.lahde.linkki.endsWith("/vaerak/11rc.px"), "rakenteinen: tilasto rivit ja lähde");
+  const v = await kutsu("hae_yrityksia", { toimiala: "96220", sivu: "2" });
+  check(v.isError && v.content[0].text.startsWith("Syöte ei kelpaa") && !v.structuredContent, "rakenteinen: väärän tyyppinen syöte on syötevirhe (tarkistaSyote)");
+  const t = await kutsu("tilasto", { taulukko: "huono" });
+  check(t.isError && t.content[0].text.includes("alue/taulukko"), "rakenteinen: liittimen syötevirheen teksti ennallaan");
 }

@@ -2,7 +2,11 @@
 // alipyyntöbudjetti (Workers Paid sallii 10 000 alipyyntöä kutsua kohden; budjetti pitää
 // yksittäisen kutsun keston kohtuullisena). Aikakatkaisu 15 s pyyntöä kohden.
 
-const USER_AGENT = "aluetieto-mcp/1.13 (Claude-liitin; Cloudflare Worker)";
+import pkg from "../package.json" with { type: "json" };
+
+/** User-Agent avustajasta riippumattomassa muodossa (keskusrepon linjaus 22.11.2026), versio package.jsonista. */
+export const userAgent = (lisa = "Cloudflare Worker") => `aluetieto-mcp/${pkg.version} (MCP-liitin; ${lisa})`;
+const USER_AGENT = userAgent();
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 const TIMEOUT_MS = 15_000;

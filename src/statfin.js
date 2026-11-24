@@ -30,7 +30,7 @@ export function parseTableId(v) {
   return null;
 }
 
-const tableUrl = ({ area, table }) => `${BASE}/${area}/${table}.px`;
+export const tableUrl = ({ area, table }) => `${BASE}/${area}/${table}.px`;
 
 export async function tableMeta(id, budget) {
   const res = await fetchJson(tableUrl(id), { ttl: 86400, budget });
