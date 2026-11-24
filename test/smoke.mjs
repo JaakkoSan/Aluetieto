@@ -294,6 +294,18 @@ for (const [name, args, pred, maxFetch] of cases) {
   check(!s.isError && ss.rivit.length === 3 && ss.rivit.some((r) => r.tekstit[0] === "75 - 79" && r.arvo === 310766) && ss.lahde.linkki.endsWith("/vaerak/11rc.px"), "rakenteinen: tilasto rivit ja lähde");
   const v = await kutsu("hae_yrityksia", { toimiala: "96220", sivu: "2" });
   check(v.isError && v.content[0].text.startsWith("Syöte ei kelpaa") && !v.structuredContent, "rakenteinen: väärän tyyppinen syöte on syötevirhe (tarkistaSyote)");
+  check(ys.katkaistu === false && ys.naytetty === ys.yritykset.length && ys.rivit_yhteensa === ys.yritykset.length, "rakenteinen: hae_yrityksia ei katkaistu (katkaistu, naytetty, rivit_yhteensa)");
+  check(ss.katkaistu === false && ss.naytetty === 3 && ss.rivit_yhteensa === 3, "rakenteinen: tilasto ei katkaistu");
+  // Sivu yli viimeisen: sivuja kokonaismäärästä, ei pyydetystä sivusta; yhteensa on aina luku.
+  const yli = await kutsu("hae_yrityksia", { toimiala: "96220", paikkakunta: "Kotka", sivu: 99 });
+  const ylis = yli.structuredContent;
+  check(!yli.isError && ylis.sivu === 99 && ylis.sivuja === ys.sivuja && ylis.seuraava === null && Number.isInteger(ylis.yhteensa) && ylis.yritykset.length === 0, `rakenteinen: hae_yrityksia sivu yli viimeisen (sivuja ${ylis?.sivuja})`);
+  // Rajaus: pitkä tilasto katkaistaan tekstissä, ja rakenteisessa tuloksessa ovat vain tekstissä kokonaan näkyvät rivit.
+  const p = await kutsu("tilasto", { taulukko: "alyr/13wz", valinnat: { Vuosi: "viimeiset 2", Kunta: "*", Tiedot: "*" } });
+  const ps = p.structuredContent;
+  const viim = ps?.rivit.at(-1);
+  const viimRivi = viim ? `${viim.tekstit.join(" | ")}: ` : "";
+  check(!p.isError && ps.katkaistu === true && ps.naytetty === ps.rivit.length && ps.naytetty < ps.rivit_yhteensa && p.content[0].text.includes("Tuloste katkaistu") && p.content[0].text.includes(`\n${viimRivi}`) && JSON.stringify(ps).length < 100000, `rakenteinen: tilasto rajattu tekstin rajaan (${ps?.naytetty}/${ps?.rivit_yhteensa})`);
   const t = await kutsu("tilasto", { taulukko: "huono" });
   check(t.isError && t.content[0].text.includes("alue/taulukko"), "rakenteinen: liittimen syötevirheen teksti ennallaan");
 }

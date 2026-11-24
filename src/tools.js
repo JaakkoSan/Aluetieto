@@ -1,7 +1,7 @@
 // MCP-työkalut: määrittelyt ja toteutukset.
 
 import { BudgetError, HttpError, NaytettavaVirhe, newBudget } from "./http.js";
-import { tyokalu, sivutieto, LAHDE_SKEEMA, NaytettavaVirhe as RunkoVirhe } from "./mcp-runko.js";
+import { tyokalu, LAHDE_SKEEMA, NaytettavaVirhe as RunkoVirhe } from "./mcp-runko.js";
 import {
   searchUrl,
   searchCompanies,
@@ -708,29 +708,76 @@ async function haeYrityksiaData(args) {
   const list = onlyActive ? companies.filter(isActive) : companies;
   // YTJ sivuttaa lähteellä (100 yritystä/sivu) ja suodatus toimiviin tehdään sivun sisällä, joten yhteensa on
   // hakuehtojen kaikki yritykset (myös lakanneet) eikä vastaa yritykset-listan pituutta.
+  // Sivumäärä kokonaismäärästä (ei pyydetystä sivusta): liian suuri sivu antaa tyhjän listan ja seuraava null.
+  const yhteensa = Number.isFinite(Number(total)) ? Math.max(0, Math.floor(Number(total))) : 0;
+  const sivuja = Math.max(Math.ceil(yhteensa / 100), 1);
   const data = {
     ...(ind ? { toimiala: ind.name ? { koodi: ind.code, nimi: ind.name } : { koodi: ind.code } } : {}),
-    ...sivutieto({ sivu: params.page, sivuja: Math.max(Math.ceil(total / 100), 1), yhteensa: total }),
+    sivu: params.page,
+    sivuja,
+    yhteensa,
+    seuraava: params.page < sivuja ? params.page + 1 : null,
     vain_toimivat: onlyActive,
     yritykset: list.map(yritysData),
     huomio: YTJ_NOTE,
     lahde: { nimi: "Patentti- ja rekisterihallitus, YTJ avoin data", linkki: searchUrl(params) },
   };
-  return data;
+  return rajaaRivit(data, "yritykset", haeYrityksiaOsat);
 }
 
-function haeYrityksiaTeksti(d) {
+/** Tekstin osat: alku (otsake ja rivien edeltävä teksti), rivit ja loppu. Teksti = clip(alku + rivit + loppu). */
+function haeYrityksiaOsat(d, kaikki) {
   const ind = d.toimiala;
   const pages = Math.ceil(d.yhteensa / 100);
   const head = [
     `YTJ-haku${ind ? `, toimiala ${ind.koodi}${ind.nimi ? ` ${ind.nimi}` : ""}` : ""}: ${fmt(d.yhteensa)} yritystä hakuehdoilla, sivu ${d.sivu}/${Math.max(pages, 1)}.`,
-    d.vain_toimivat ? `Tällä sivulla toimivia: ${d.yritykset.length} (lakanneet ja poistetut jätetty pois).` : `Tällä sivulla: ${d.yritykset.length}.`,
+    d.vain_toimivat ? `Tällä sivulla toimivia: ${kaikki.length} (lakanneet ja poistetut jätetty pois).` : `Tällä sivulla: ${kaikki.length}.`,
   ];
-  const lines = d.yritykset.map(yritysRivi);
-  let out = head.join("\n") + "\n\n" + (lines.length ? lines.join("\n") : "(ei yrityksiä)");
-  if (d.sivu < pages) out += `\n\nLisää tuloksia: sivu ${d.sivu + 1}.`;
-  out += `\n\n${d.huomio}\nLähde: ${d.lahde.nimi}.`;
-  return clip(out);
+  const rivit = kaikki.map(yritysRivi);
+  let loppu = "";
+  if (d.sivu < pages) loppu += `\n\nLisää tuloksia: sivu ${d.sivu + 1}.`;
+  loppu += `\n\n${d.huomio}\nLähde: ${d.lahde.nimi}.`;
+  return { alku: head.join("\n") + "\n", rivit: rivit.length ? rivit : ["(ei yrityksiä)"], loppu };
+}
+
+function haeYrityksiaTeksti(d) {
+  return osatTekstiksi(haeYrityksiaOsat(d, d[KAIKKI] ?? d.yritykset));
+}
+
+// Rakenteinen tulos rajataan samalla rajalla kuin teksti (MAX_OUTPUT): mukaan vain rivit, jotka näkyvät tekstissä
+// kokonaan. Teksti tehdään kaikista riveistä kuten ennen (clip katkaisee), joten se pysyy samana.
+const KAIKKI = "_kaikki_rivit"; // ei structuredContentiin (poisRakenteesta)
+
+/** Teksti osista: jokainen rivi alkaa rivinvaihdolla alun jälkeen. */
+function osatTekstiksi({ alku, rivit, loppu }) {
+  return clip(alku + rivit.map((r) => "\n" + r).join("") + loppu);
+}
+
+/** Montako riviä näkyy tekstissä kokonaan (clip katkaisee MAX_OUTPUT merkin kohdalta). */
+function mahtuvatRivit(alku, rivit) {
+  let pituus = alku.length;
+  let n = 0;
+  for (const r of rivit) {
+    pituus += 1 + r.length;
+    if (pituus > MAX_OUTPUT) break;
+    n++;
+  }
+  return n;
+}
+
+/** Rajaa data[kentta] tekstin rajaan ja lisää kentät katkaistu, naytetty ja rivit_yhteensa. */
+function rajaaRivit(data, kentta, osat) {
+  const kaikki = data[kentta];
+  const { alku, rivit } = osat(data, kaikki);
+  const n = kaikki.length ? Math.min(kaikki.length, mahtuvatRivit(alku, rivit)) : 0;
+  data.katkaistu = n < kaikki.length;
+  data.naytetty = n;
+  data.rivit_yhteensa = kaikki.length;
+  if (data.katkaistu) {
+    data[KAIKKI] = kaikki;
+    data[kentta] = kaikki.slice(0, n);
+  }
+  return data;
 }
 
 async function yrityksenTiedot(args) {
@@ -1391,10 +1438,10 @@ async function tilastoData(args) {
     .slice(0, 5)
     .map((n) => n.slice(0, 400));
   data.lahde = { nimi: STATFIN_SOURCE.replace(/^Lähde: /, ""), linkki: tableUrl(id) };
-  return data;
+  return rajaaRivit(data, "rivit", tilastoOsat);
 }
 
-function tilastoTeksti(d) {
+function tilastoOsat(d, kaikki) {
   const out = [`${d.taulukko}: ${d.otsikko}`];
   if (d.paivitetty) out.push(`Päivitetty: ${fmtDate(d.paivitetty)}`);
   if (d.rajaus.length) out.push(`Rajaus: ${d.rajaus.map((r) => `${r.muuttuja} = ${r.arvo}`).join("; ")}`);
@@ -1402,13 +1449,15 @@ function tilastoTeksti(d) {
   if (d.yksikot.length) out.push(`Yksiköt: ${d.yksikot.map((x) => `${x.nimi}: ${x.yksikko}`).join("; ")}`);
   out.push("");
   if (d.muuttujat.length) out.push(d.muuttujat.map((m) => m.nimi).join(" | ") + " : arvo");
-  for (const r of d.rivit) {
-    const lab = r.tekstit.join(" | ");
-    out.push(`${lab || "Arvo"}: ${fmtNum(r.arvo ?? r.arvo_teksti ?? null)}${r.tila ? ` (${r.tila})` : ""}`);
-  }
-  if (d.huomiot.length) out.push("", ...d.huomiot.map((n) => `Huom: ${n}`));
-  out.push("", `".." = tieto puuttuu tai on salassa pidettävä. Lähde: ${d.lahde.nimi}, taulukko ${d.taulukko}.`);
-  return clip(out.join("\n"));
+  const rivit = kaikki.map((r) => `${r.tekstit.join(" | ") || "Arvo"}: ${fmtNum(r.arvo ?? r.arvo_teksti ?? null)}${r.tila ? ` (${r.tila})` : ""}`);
+  const loppu = [];
+  if (d.huomiot.length) loppu.push("", ...d.huomiot.map((n) => `Huom: ${n}`));
+  loppu.push("", `".." = tieto puuttuu tai on salassa pidettävä. Lähde: ${d.lahde.nimi}, taulukko ${d.taulukko}.`);
+  return { alku: out.join("\n"), rivit, loppu: "\n" + loppu.join("\n") };
+}
+
+function tilastoTeksti(d) {
+  return osatTekstiksi(tilastoOsat(d, d[KAIKKI] ?? d.rivit));
 }
 
 // ---------- Suomi.fi-palvelutietovaranto ----------
@@ -2686,6 +2735,14 @@ const virheet = (hae) => async (args, env) => {
 
 const NIMI_KOODI = { type: "object", properties: { koodi: { type: "string" }, nimi: { type: "string" } }, required: ["koodi"] };
 const VALINNAINEN_SIVU = { anyOf: [{ type: "integer" }, { type: "null" }] };
+// Rivien rajaus tekstin rajaan (MAX_OUTPUT): katkaistu true, kun rakenteisessa tuloksessa on vain naytetty riviä
+// rivit_yhteensa rivistä (samat rivit kuin tekstissä kokonaan).
+const RAJAUS_KENTAT = {
+  katkaistu: { type: "boolean", description: "Tulos rajattu tekstin pituusrajaan; rajaa hakua." },
+  naytetty: { type: "integer", description: "Rivejä tässä tuloksessa." },
+  rivit_yhteensa: { type: "integer", description: "Rivejä ennen rajausta." },
+};
+const RAJAUS_PAKOLLISET = ["katkaistu", "naytetty", "rivit_yhteensa"];
 
 const RAKENNE = {
   etsi_toimiala: {
@@ -2742,9 +2799,10 @@ const RAKENNE = {
           },
         },
         huomio: { type: "string" },
+        ...RAJAUS_KENTAT,
         lahde: LAHDE_SKEEMA,
       },
-      required: ["sivu", "sivuja", "yhteensa", "seuraava", "vain_toimivat", "yritykset", "huomio", "lahde"],
+      required: ["sivu", "sivuja", "yhteensa", "seuraava", "vain_toimivat", "yritykset", "huomio", ...RAJAUS_PAKOLLISET, "lahde"],
     },
   },
   tilasto: {
@@ -2788,9 +2846,10 @@ const RAKENNE = {
           },
         },
         huomiot: { type: "array", items: { type: "string" } },
+        ...RAJAUS_KENTAT,
         lahde: LAHDE_SKEEMA,
       },
-      required: ["taulukko", "otsikko", "rajaus", "oletusvalinnat", "yksikot", "muuttujat", "rivit", "huomiot", "lahde"],
+      required: ["taulukko", "otsikko", "rajaus", "oletusvalinnat", "yksikot", "muuttujat", "rivit", "huomiot", ...RAJAUS_PAKOLLISET, "lahde"],
     },
   },
 };
@@ -2805,6 +2864,7 @@ export const TYOKALUT = MAARITTELYT.filter((t) => RAKENTEISET.includes(t.name)).
     oikeus: "luku",
     avoin: t.annotations.openWorldHint,
     tulosSkeema: r.tulosSkeema,
+    poisRakenteesta: [KAIKKI],
     hae: virheet(r.hae),
     teksti: r.teksti,
   });
