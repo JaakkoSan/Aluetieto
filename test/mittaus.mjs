@@ -146,9 +146,10 @@ const TEHTAVAT = [
       const { teksti } = await k("tilasto", { taulukko: "alyr/13wz", valinnat: { Vuosi: "viimeiset 2", Kunta: "*", Tiedot: "Tplukumaara2" } });
       // Malli laskee kasvun tekstistä: rivit "vuosi | kunta: arvo" tai "kunta | vuosi: arvo".
       const arvot = {};
-      for (const m of teksti.matchAll(/^(.+?) \| (.+?): ([\d ]+)$/gm)) {
+      // Tuhaterotin on sitova välilyönti (U+00A0), joten \s eikä pelkkä välilyönti.
+      for (const m of teksti.matchAll(/^(.+?) \| (.+?): (\d[\d\s]*)$/gm)) {
         const [a, b] = /^\d{4}$/.test(m[1]) ? [m[1], m[2]] : [m[2], m[1]];
-        (arvot[b] ??= {})[a] = Number(m[3].replace(/ /g, ""));
+        (arvot[b] ??= {})[a] = Number(m[3].replace(/\s/g, ""));
       }
       return kasvu(arvot);
     },
@@ -167,12 +168,12 @@ const TEHTAVAT = [
   },
 ];
 
-/** Kymmenen suurinta suhteellista kasvua kunnista, joissa vähintään 500 toimipaikkaa (koko maa pois). */
+/** Kymmenen suurinta suhteellista kasvua kunnista, joissa vähintään 500 toimipaikkaa (koko maa ja tuntematon kunta pois). */
 function kasvu(arvot) {
   const out = [];
   for (const [kunta, v] of Object.entries(arvot)) {
     const vuodet = Object.keys(v).sort();
-    if (vuodet.length < 2 || /KOKO MAA/i.test(kunta)) continue;
+    if (vuodet.length < 2 || /^(KOKO MAA|Tuntematon)$/i.test(kunta)) continue;
     const [a, b] = [v[vuodet[0]], v[vuodet[1]]];
     if (!(a >= 500) || !Number.isFinite(b)) continue;
     out.push([kunta, a, b, Math.round(((b - a) / a) * 1000) / 10]);
@@ -194,15 +195,16 @@ for (const t of TEHTAVAT) {
   p.tulos = JSON.stringify(pTulos).length;
   let ka = null;
   let oikein = null;
+  let kTulos = null;
   const koodiTyokalut = { T1: ["hae_yrityksia"], T2: ["etsi_toimiala", "hae_yrityksia"], T3: ["tilasto"] }[t.nimi.slice(0, 2)];
   if (koodiTyokalut.every((n) => rakenteiset.includes(n))) {
     ka = uusiLoki();
-    const kTulos = await t.koodiajo(kutsuja(ka, { tekstiKontekstiin: false }));
+    kTulos = await t.koodiajo(kutsuja(ka, { tekstiKontekstiin: false }));
     ka.ohjelma = t.koodiajo.toString().length;
     ka.tulos = JSON.stringify(kTulos).length;
     oikein = t.tarkista(pTulos, kTulos);
   }
-  tulokset.push({ tehtava: t.nimi, kuvaus: t.kuvaus, perinteinen: p, koodiajo: ka, sama_tulos: oikein, tulos: pTulos });
+  tulokset.push({ tehtava: t.nimi, kuvaus: t.kuvaus, perinteinen: p, koodiajo: ka, sama_tulos: oikein, tulos: pTulos, koodiajon_tulos: kTulos });
 }
 
 const yhteensa = (l) => (l ? l.argumentit + l.kontekstiin + l.ohjelma + l.tulos : null);
