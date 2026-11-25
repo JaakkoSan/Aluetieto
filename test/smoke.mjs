@@ -283,8 +283,9 @@ for (const [name, args, pred, maxFetch] of cases) {
   const lista = (await rpc("tools/list", {})).result.tools;
   const rakenteiset = lista.filter((t) => t.outputSchema).map((t) => t.name).sort();
   check(
-    JSON.stringify(rakenteiset) === '["alueen_vaesto","aluetarkistus","etsi_toimiala","hae_tilastoja","hae_yrityksia","tilasto"]',
-    `rakenteinen: outputSchema kuudella työkalulla (${rakenteiset.join(", ")})`,
+    JSON.stringify(rakenteiset) ===
+      '["alueen_vaesto","aluetarkistus","etsi_toimiala","hae_julkisia_palveluja","hae_tilastoja","hae_yrityksia","hintaindeksi","indeksitarkistus","koululomat","korot","tilasto","tulevat_paivat","yrityksen_tiedot"]',
+    `rakenteinen: outputSchema 13 työkalulla (${rakenteiset.join(", ")})`,
   );
   check(!varoitukset.length, `rakenteinen: ei testitilan varoituksia${varoitukset.length ? ` (${varoitukset.join("; ")})` : ""}`);
   const e = await kutsu("etsi_toimiala", { hakusana: "962" });
@@ -338,6 +339,39 @@ for (const [name, args, pred, maxFetch] of cases) {
   );
   const ht0 = await kutsu("hae_tilastoja", { hakusana: "qwxzyv" });
   check(!ht0.isError && ht0.structuredContent.yhteensa === 0 && ht0.structuredContent.taulukot.length === 0 && ht0.content[0].text.includes("ei löytynyt"), "rakenteinen: hae_tilastoja ei osumia");
+  // 1.17.0: yrityksen_tiedot, hintaindeksi, indeksitarkistus, korot, hae_julkisia_palveluja, tulevat_paivat ja koululomat.
+  const yt = await kutsu("yrityksen_tiedot", { y_tunnus: "0112038-9" });
+  const yts = yt.structuredContent;
+  check(!yt.isError && yts.loytyi === true && yts.nimi === "Nokia Oyj" && yts.toimiva === true && yts.rekisterit.length > 0 && yts.lahde.linkki.includes("0112038-9"), "rakenteinen: yrityksen_tiedot");
+  const yt0 = await kutsu("yrityksen_tiedot", { y_tunnus: "1234567-1" });
+  check(!yt0.isError && yt0.structuredContent.loytyi === false && yt0.content[0].text.includes("ei löytynyt"), "rakenteinen: yrityksen_tiedot ei löytynyt");
+  const hi = await kutsu("hintaindeksi", { alkaen: "2024-01", paattyen: "2024-12" });
+  const his = hi.structuredContent;
+  check(!hi.isError && his.kuukaudet.length === 12 && his.alkaen === "2024-01" && his.paattyen === "2024-12" && his.vuosimuutos_peruste === "virallinen" && his.indeksi.tunnus === "khi", "rakenteinen: hintaindeksi");
+  const it = await kutsu("indeksitarkistus", { lahtokohta: "2024-03", tarkistus: "2025-03", summa: 850 });
+  const its = it.structuredContent;
+  check(!it.isError && its.lahtokohta.ajankohta === "2024-03" && its.tarkistus.viimeisin_julkaistu === false && Math.abs(its.summa.tarkistettu - 850 * its.kerroin) < 1e-9, "rakenteinen: indeksitarkistus");
+  const ko = await kutsu("korot", { paiva: "2026-10-31", historia: true });
+  const kos = ko.structuredContent;
+  check(!ko.isError && kos.viitekorko.korko === 2.5 && kos.viitekorko.viivastyskorko === 9.5 && kos.ohjauskorot.length === 3 && kos.historia.length > 10, "rakenteinen: korot");
+  const ko0 = await kutsu("korot", { paiva: "2005-03-01" });
+  check(!ko0.isError && ko0.structuredContent.viitekorko_ennen_2009 === true && ko0.structuredContent.viitekorko === null && ko0.structuredContent.historia === null, "rakenteinen: korot ennen 2009");
+  const jp = await kutsu("hae_julkisia_palveluja", { alue: "Kymenlaakson hyvinvointialue", hakusana: "kotihoito" });
+  const jps = jp.structuredContent;
+  check(!jp.isError && jps.palvelut.length > 0 && jps.palvelut.length === jps.naytetty && jps.katkaistu === false && jps.palvelut.every((p) => jp.content[0].text.includes(`(${p.tunniste})`)), "rakenteinen: hae_julkisia_palveluja");
+  const tp = await kutsu("tulevat_paivat", { alkaen: "1.12.2026", paivia: 40, kunta: "Kotka", ennakko_paivia: 14 });
+  const tps = tp.structuredContent;
+  check(!tp.isError && tps.paivat.length > 0 && tps.kunta === "Kotka" && tps.ennakko_paivia === 14 && tps.paivat.every((p) => p.kampanja_alkaa) && tps.katkaistu === false, "rakenteinen: tulevat_paivat");
+  const tpm = await kutsu("tulevat_paivat", { alkaen: "2027-03-01", paivia: 60, luokat: "aika" });
+  check(!tpm.isError && tpm.structuredContent.luokat[0] === "aika", "rakenteinen: tulevat_paivat luokat merkkijonona (oma syötteen käsittely)");
+  const tpl = await kutsu("tulevat_paivat", { alkaen: "2026-11-25", paivia: 400 });
+  const tpls = tpl.structuredContent;
+  check(!tpl.isError && tpls.naytetty === tpls.paivat.length && tpls.rivit_yhteensa >= tpls.naytetty && tpl.content[0].text.includes(`Päiviä: ${tpls.rivit_yhteensa}`), `rakenteinen: tulevat_paivat 400 päivää (${tpls?.naytetty}/${tpls?.rivit_yhteensa})`);
+  const kl = await kutsu("koululomat", { kunta: "kotka", lukuvuosi: "2026-2027" });
+  const kls = kl.structuredContent;
+  check(!kl.isError && kls.tila === "loytyi" && kls.kunta === "Kotka" && kls.loma_ajat.syysloma.alkaa === "2026-10-19", "rakenteinen: koululomat");
+  const kl0 = await kutsu("koululomat", { kunta: "Helsinki" });
+  check(!kl0.isError && kl0.structuredContent.tila === "kunta_ei_taulukossa" && kl0.structuredContent.loma_ajat === null, "rakenteinen: koululomat kunta ei taulukossa");
 }
 
 // Salainen polku: kun MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> vastaa (sama kuin ennen runkoa).
