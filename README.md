@@ -80,10 +80,18 @@ Osa työkaluista antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent
 | `alueen_vaesto` | `alue`, `vuosi`, `postinumeroalueet` (asukkaat, naiset, miehet, ikäryhmät, keski-ikä, mediaanitulo; salattu = `null`), `yhteensa` (useammalla alueella), `tuntemattomat` |
 | `aluetarkistus` | `toimiala`, `alue`, `kohderyhma`, `vuosi`, `postinumeroalueet` (`yrityksia`, `vaesto`, `asukasta_per_yritys`), `yhteensa`, `tuntemattomat`, `osin_laskematta`, `nayta_yritykset`, `yritykset`, `huomio`, `lahteet` |
 | `hae_tilastoja` | `hakusana`, `yhteensa`, `sivu`, `sivuja`, `seuraava`, `taulukot` (`tunnus`, `otsikko`, `paivitetty`, `linkki`) |
+| `yrityksen_tiedot` | `y_tunnus`, `loytyi`, `nimi`, `tila`, `toimiva`, `tilanteet`, `yritysmuoto`, `toimiala`, `osoite`, `rekisteroity`, `muut_nimet`, `rekisterit` (`rekisteri`, `alkaen`, `paattyy`), `paivitetty`, `huomio` |
+| `hintaindeksi` | `indeksi`, `alkaen`, `paattyen`, `viimeisin`, `vuosimuutos_peruste`, `kuukaudet` (`kuukausi`, `pisteluku`, `vuosimuutos`), `paivitetty` |
+| `indeksitarkistus` | `indeksi`, `vuosikeskiarvot`, `lahtokohta` ja `tarkistus` (`ajankohta`, `pisteluku`), `muutos_prosenttia`, `kerroin`, `summa` |
+| `korot` | `paiva`, `viitekorko_ennen_2009`, `viitekorko` (kausi, korko, EKP:n korko, viivästyskorot), `ohjauskorot`, `historia` |
+| `hae_julkisia_palveluja` | `alue`, `hakusana`, `koko_maa`, `yhteensa`, `palvelut` (`tunniste`, `nimi`; enintään 200) |
+| `tulevat_paivat` | `alkaen`, `loppuu`, `luokat`, `ala`, `kunta`, `ennakko_paivia`, `huomautukset`, `paivat` (`pvm`, `nimi`, `luokat`, `saanto`, `asema`, `tarjouksiin`, `kampanja_alkaa`, `huom`, `lahde`), `tarkistettu` |
+| `koululomat` | `kunta`, `tila`, `lukuvuosi`, `koulu_paattyy_saannon_mukaan`, `saannot`, `loma_ajat`, `tarkistettu` |
 
 - Jokaisessa tuloksessa on `lahde` (`nimi`, `linkki`).
-- Rakenteinen tulos rajataan samaan 50 000 merkin rajaan kuin teksti: mukana ovat vain tekstissä kokonaan näkyvät rivit, ja `katkaistu`, `naytetty` ja `rivit_yhteensa` kertovat rajauksen (`hae_yrityksia`, `tilasto`, `aluetarkistus`).
-- Syöte tarkistetaan näissä työkaluissa skeemaa vasten: väärän tyyppinen arvo on syötevirhe.
+- Luvut ovat pyöristämättömiä; teksti pyöristää ne kuten ennen. Kuukaudet ja ajankohdat muodossa `vvvv-kk` (vuosikeskiarvo `vvvv`), päivät `vvvv-kk-pp`.
+- Rakenteinen tulos rajataan samaan 50 000 merkin rajaan kuin teksti: mukana ovat vain tekstissä kokonaan näkyvät rivit, ja `katkaistu`, `naytetty` ja `rivit_yhteensa` kertovat rajauksen (`hae_yrityksia`, `tilasto`, `aluetarkistus`, `tulevat_paivat`; `hae_julkisia_palveluja` 200 palvelun rajaan).
+- Syöte tarkistetaan näissä työkaluissa skeemaa vasten: väärän tyyppinen arvo on syötevirhe. Poikkeus on `tulevat_paivat`, joka hyväksyy luokat myös pilkuilla eroteltuna merkkijonona ja tarkistaa syötteen itse.
 
 ## Käyttörajoitus ja merkinnät
 

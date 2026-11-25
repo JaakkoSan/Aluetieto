@@ -537,7 +537,21 @@ for (const t of MAARITTELYT) {
 }
 
 // Koodiajo-valmius (keskusrepon linjaus): nämä työkalut palauttavat tekstin rinnalla rakenteisen tuloksen.
-const RAKENTEISET = ["etsi_toimiala", "hae_yrityksia", "tilasto", "alueen_vaesto", "aluetarkistus", "hae_tilastoja"];
+const RAKENTEISET = [
+  "etsi_toimiala",
+  "hae_yrityksia",
+  "tilasto",
+  "alueen_vaesto",
+  "aluetarkistus",
+  "hae_tilastoja",
+  "yrityksen_tiedot",
+  "hintaindeksi",
+  "indeksitarkistus",
+  "korot",
+  "hae_julkisia_palveluja",
+  "tulevat_paivat",
+  "koululomat",
+];
 export const TOOLS = MAARITTELYT.filter((t) => !RAKENTEISET.includes(t.name));
 
 // ---------- Apufunktiot ----------
@@ -765,30 +779,47 @@ function rajaaRivit(data, kentta, osat) {
   return data;
 }
 
-async function yrityksenTiedot(args) {
+async function yrityksenTiedotData(args) {
   const id = String(args.y_tunnus ?? "").trim();
   if (!/^\d{7}-\d$/.test(id)) throw new UserError("Anna y-tunnus muodossa 1234567-8.");
   const { companies } = await searchCompanies({ businessId: id }, { budget: newBudget(5), ttl: 6 * 3600 });
   const c = companies[0];
-  if (!c) return `Y-tunnuksella ${id} ei löytynyt yritystä YTJ:n avoimesta datasta. Toiminimet eivät ole avoimessa datassa.`;
+  const lahde = { nimi: "Patentti- ja rekisterihallitus, YTJ avoin data", linkki: ytjWebUrl(id) };
+  if (!c) return { y_tunnus: id, loytyi: false, huomio: YTJ_NOTE, lahde };
   const bl = businessLine(c);
   const a = address(c);
+  const d = { y_tunnus: id, loytyi: true, nimi: currentName(c), tila: statusText(c), toimiva: isActive(c), tilanteet: situations(c) };
+  // Puuttuva tieto jätetään pois (teksti näyttää "–"); toimialan nimi vain, kun se on.
+  const muoto = companyForm(c);
+  if (muoto !== null && muoto !== undefined) d.yritysmuoto = muoto;
+  if (bl) d.toimiala = bl.name === undefined || bl.name === null ? { koodi: bl.code } : { koodi: bl.code, nimi: bl.name };
+  if (a?.text !== undefined && a?.text !== null) d.osoite = a.text;
+  if (c.registrationDate) d.rekisteroity = c.registrationDate;
+  d.muut_nimet = auxNames(c);
+  d.rekisterit = registers(c).map((r) => ({ rekisteri: r.text, ...(r.since ? { alkaen: r.since } : {}), ...(r.until ? { paattyy: r.until } : {}) }));
+  if (c.lastModified) d.paivitetty = c.lastModified;
+  d.huomio = YTJ_NOTE;
+  d.lahde = lahde;
+  return d;
+}
+
+function yrityksenTiedotTeksti(d) {
+  const id = d.y_tunnus;
+  if (!d.loytyi) return `Y-tunnuksella ${id} ei löytynyt yritystä YTJ:n avoimesta datasta. Toiminimet eivät ole avoimessa datassa.`;
   const lines = [
-    `${currentName(c)} (${id})`,
-    `Tila: ${statusText(c)}${situations(c).length ? `, ${situations(c).join(", ")}` : ""}`,
-    `Yritysmuoto: ${companyForm(c) ?? "–"}`,
-    `Päätoimiala: ${bl ? `${bl.code} ${bl.name}` : "–"}`,
-    `Osoite: ${a?.text ?? "–"}`,
-    `Rekisteröity: ${fmtDate(c.registrationDate)}`,
+    `${d.nimi} (${id})`,
+    `Tila: ${d.tila}${d.tilanteet.length ? `, ${d.tilanteet.join(", ")}` : ""}`,
+    `Yritysmuoto: ${d.yritysmuoto ?? "–"}`,
+    `Päätoimiala: ${d.toimiala ? `${d.toimiala.koodi} ${d.toimiala.nimi}` : "–"}`,
+    `Osoite: ${d.osoite ?? "–"}`,
+    `Rekisteröity: ${fmtDate(d.rekisteroity)}`,
   ];
-  const aux = auxNames(c);
-  if (aux.length) lines.push(`Muut nimet (aputoiminimet ym.): ${aux.join(", ")}`);
-  const regs = registers(c);
-  if (regs.length) {
+  if (d.muut_nimet.length) lines.push(`Muut nimet (aputoiminimet ym.): ${d.muut_nimet.join(", ")}`);
+  if (d.rekisterit.length) {
     lines.push("", "Rekisterit:");
-    for (const r of regs) lines.push(`- ${r.text}${r.since ? ` (alkaen ${fmtDate(r.since)}` : ""}${r.until ? `${r.since ? ", " : " ("}päättyy ${fmtDate(r.until)}` : ""}${r.since || r.until ? ")" : ""}`);
+    for (const r of d.rekisterit) lines.push(`- ${r.rekisteri}${r.alkaen ? ` (alkaen ${fmtDate(r.alkaen)}` : ""}${r.paattyy ? `${r.alkaen ? ", " : " ("}päättyy ${fmtDate(r.paattyy)}` : ""}${r.alkaen || r.paattyy ? ")" : ""}`);
   }
-  lines.push("", `Päivitetty YTJ:ssä: ${fmtDate(c.lastModified)}`, "Lähde: Patentti- ja rekisterihallitus, YTJ avoin data.");
+  lines.push("", `Päivitetty YTJ:ssä: ${fmtDate(d.paivitetty)}`, "Lähde: Patentti- ja rekisterihallitus, YTJ avoin data.");
   return lines.join("\n");
 }
 
@@ -1113,7 +1144,13 @@ function resolveSeries(args) {
   return info;
 }
 
-async function hintaindeksi(args) {
+// Kausi rakenteisessa tuloksessa: kuukausi VVVV-KK tai vuosi VVVV (talous.js käyttää muotoa VVVVMKK).
+const kausiUlos = (p) => String(p).replace("M", "-");
+const kausiSisaan = (s) => String(s).replace("-", "M");
+const KHI_LAHDE = { nimi: "Tilastokeskus, kuluttajahintaindeksi (CC BY 4.0)", linkki: "https://stat.fi/tilasto/khi" };
+const indeksiTieto = (info) => ({ tunnus: info.kind, nimi: info.name, sarja: info.label, perusvuosi: String(info.base) });
+
+async function hintaindeksiData(args) {
   const info = resolveSeries(args);
   const budget = newBudget(6);
   const { values, updated } = await indexSeries(info, false, budget);
@@ -1131,24 +1168,39 @@ async function hintaindeksi(args) {
   if (rows.length > 240) throw new UserError("Väli on liian pitkä (yli 240 kuukautta). Rajaa alkaen- ja paattyen-kuukausilla.");
   let official = null;
   if (info.kind === "khi") official = (await khiAnnualChange(budget)).values;
-  const out = [`${info.name} (${info.label}), kuukausittain ${periodLabel(rows[0])}–${periodLabel(rows.at(-1))}. Viimeisin julkaistu kuukausi: ${periodLabel(latest)}.`];
+  const data = {
+    indeksi: indeksiTieto(info),
+    alkaen: kausiUlos(rows[0]),
+    paattyen: kausiUlos(rows.at(-1)),
+    viimeisin: kausiUlos(latest),
+    vuosimuutos_peruste: info.kind === "khi" ? "virallinen" : "laskettu",
+    kuukaudet: rows.map((p) => {
+      const prev = values.get(yearBefore(p));
+      const change = official?.get(p) ?? (prev ? (values.get(p) / prev - 1) * 100 : null);
+      return { kuukausi: kausiUlos(p), pisteluku: values.get(p), vuosimuutos: change };
+    }),
+  };
+  if (updated) data.paivitetty = String(updated);
+  data.lahde = KHI_LAHDE;
+  return data;
+}
+
+function hintaindeksiTeksti(d) {
+  const kk = d.kuukaudet;
+  const out = [`${d.indeksi.nimi} (${d.indeksi.sarja}), kuukausittain ${periodLabel(kausiSisaan(kk[0].kuukausi))}–${periodLabel(kausiSisaan(kk.at(-1).kuukausi))}. Viimeisin julkaistu kuukausi: ${periodLabel(kausiSisaan(d.viimeisin))}.`];
   out.push("", "Kuukausi | Pisteluku | Vuosimuutos %");
-  for (const p of rows) {
-    const prev = values.get(yearBefore(p));
-    const change = official?.get(p) ?? (prev ? (values.get(p) / prev - 1) * 100 : null);
-    out.push(`${periodLabel(p)} | ${fmtDec(values.get(p))} | ${change === null ? "–" : fmtDec(change, 1)}`);
-  }
+  for (const r of kk) out.push(`${periodLabel(kausiSisaan(r.kuukausi))} | ${fmtDec(r.pisteluku)} | ${r.vuosimuutos === null ? "–" : fmtDec(r.vuosimuutos, 1)}`);
   out.push(
     "",
-    info.kind === "khi"
+    d.vuosimuutos_peruste === "virallinen"
       ? "Vuosimuutos on Tilastokeskuksen virallinen kuluttajahintaindeksin vuosimuutos (taulukko 122p), joka on sama kaikilla perusvuosilla."
       : "Vuosimuutos on laskettu pisteluvuista (12 kuukauden muutos).",
-    `${KHI_SOURCE}. Taulukko päivitetty ${updated ? fmtDate(updated) : "?"}.`,
+    `${KHI_SOURCE}. Taulukko päivitetty ${d.paivitetty ? fmtDate(d.paivitetty) : "?"}.`,
   );
   return clip(out.join("\n"));
 }
 
-async function indeksitarkistus(args) {
+async function indeksitarkistusData(args) {
   const info = resolveSeries(args);
   const fromP = parsePeriod(args.lahtokohta);
   if (!fromP) throw new UserError('Anna lahtokohta kuukautena (VVVV-KK, esim. "2024-03") tai vuotena (VVVV, vuosikeskiarvo).');
@@ -1165,15 +1217,30 @@ async function indeksitarkistus(args) {
   if (a === undefined) throw new UserError(`Pistelukua ei löydy ajankohdalle ${periodLabel(fromP)} (${info.label}). Sarjan viimeisin: ${periodLabel(latest)}.`);
   if (b === undefined) throw new UserError(`Pistelukua ei löydy ajankohdalle ${periodLabel(toP)} (${info.label}). Viimeisin julkaistu: ${periodLabel(latest)}.`);
   const ratio = b / a;
-  const out = [`Indeksitarkistus: ${info.label}${yearly ? " (vuosikeskiarvot)" : ""}`];
-  out.push(`Lähtökohta ${periodLabel(fromP)}: ${fmtDec(a)}`);
-  out.push(`Tarkistus ${periodLabel(toP)}: ${fmtDec(b)}${!args.tarkistus ? " (viimeisin julkaistu)" : ""}`);
-  out.push(`Muutos: ${fmtDec((ratio - 1) * 100, 2)} % (kerroin ${ratio.toFixed(4).replace(".", ",")})`);
+  const data = {
+    indeksi: indeksiTieto(info),
+    vuosikeskiarvot: yearly,
+    lahtokohta: { ajankohta: kausiUlos(fromP), pisteluku: a },
+    tarkistus: { ajankohta: kausiUlos(toP), pisteluku: b, viimeisin_julkaistu: !args.tarkistus },
+    muutos_prosenttia: (ratio - 1) * 100,
+    kerroin: ratio,
+    summa: null,
+  };
   const sum = Number(String(args.summa ?? "").replace(/\s/g, "").replace(",", "."));
   if (args.summa !== undefined && args.summa !== null && args.summa !== "") {
     if (!Number.isFinite(sum)) throw new UserError("Anna summa numerona, esim. 850 tai 850,50.");
-    out.push(`Summa ${fmtDec(sum)} → ${fmtDec(sum * ratio)} (muutos ${fmtDec(sum * ratio - sum)})`);
+    data.summa = { alkuperainen: sum, tarkistettu: sum * ratio, muutos: sum * ratio - sum };
   }
+  data.lahde = KHI_LAHDE;
+  return data;
+}
+
+function indeksitarkistusTeksti(d) {
+  const out = [`Indeksitarkistus: ${d.indeksi.sarja}${d.vuosikeskiarvot ? " (vuosikeskiarvot)" : ""}`];
+  out.push(`Lähtökohta ${periodLabel(kausiSisaan(d.lahtokohta.ajankohta))}: ${fmtDec(d.lahtokohta.pisteluku)}`);
+  out.push(`Tarkistus ${periodLabel(kausiSisaan(d.tarkistus.ajankohta))}: ${fmtDec(d.tarkistus.pisteluku)}${d.tarkistus.viimeisin_julkaistu ? " (viimeisin julkaistu)" : ""}`);
+  out.push(`Muutos: ${fmtDec(d.muutos_prosenttia, 2)} % (kerroin ${d.kerroin.toFixed(4).replace(".", ",")})`);
+  if (d.summa) out.push(`Summa ${fmtDec(d.summa.alkuperainen)} → ${fmtDec(d.summa.tarkistettu)} (muutos ${fmtDec(d.summa.muutos)})`);
   out.push(
     "",
     "Laskenta: uusi summa = summa × tarkistuksen pisteluku / lähtökohdan pisteluku. Tarkista sopimuksesta indeksi, perusvuosi, tarkistuskuukausi sekä mahdolliset rajat (esim. vähimmäiskorotus tai korotuksen vain ylöspäin). Pisteluvut ovat Tilastokeskuksen julkaisemia pyöristettyjä lukuja.",
@@ -1182,44 +1249,72 @@ async function indeksitarkistus(args) {
   return clip(out.join("\n"));
 }
 
-async function korot(args) {
+const EKP_LAHDE = { nimi: "EKP:n tilastot (Source: ECB statistics)", linkki: "https://data.ecb.europa.eu/" };
+const OHJAUSKOROT = [
+  ["talletuskorko", "Talletuskorko", "dfr"],
+  ["perusrahoitusoperaatiot", "Perusrahoitusoperaatioiden korko", "mro"],
+  ["maksuvalmiusluotto", "Maksuvalmiusluoton korko", "mlf"],
+];
+
+async function korotData(args) {
   const d = args.paiva ? String(args.paiva).trim() : new Date().toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new UserError('Anna päivä muodossa VVVV-KK-PP, esim. "2026-10-31".');
-  const { mro, dfr, mlf } = await ecbRates();
-  const out = [`Korot ${fmtDate(d)}`];
+  const korot = await ecbRates();
+  const { mro } = korot;
   const start = periodStart(d);
-  if (start < FIRST_REFERENCE_PERIOD) {
-    out.push("", "Viitekorkoa ennen vuotta 2009 ei lasketa (EKP:n perusrahoitusoperaatiot olivat vaihtuvakorkoisia 2000–2008). Katso Suomen Pankin julkaisemat viitekorot.");
-  } else {
+  const data = { paiva: d, viitekorko_ennen_2009: start < FIRST_REFERENCE_PERIOD, viitekorko: null };
+  if (!data.viitekorko_ennen_2009) {
     const ref = referenceRate(mro, start);
     if (ref) {
-      out.push(
-        "",
-        `Korkolain viitekorko ${fmtDate(start)}–${fmtDate(periodEnd(start))}: ${fmtDec(ref.rate, 1)} %`,
-        `  (EKP:n perusrahoitusoperaatioiden korko ennen kauden alkua ${fmtDec(ref.mro)} %, voimassa ${fmtDate(ref.mroDate)} alkaen, pyöristettynä ylöspäin puoleen prosenttiyksikköön; korkolaki 633/1982 12 §)`,
-        `Viivästyskorko: ${fmtDec(ref.rate + 7, 1)} % (viitekorko + 7 prosenttiyksikköä, korkolaki 4 §)`,
-        `Viivästyskorko kaupallisissa sopimuksissa: ${fmtDec(ref.rate + 8, 1)} % (viitekorko + 8 prosenttiyksikköä, korkolaki 4 a §)`,
-      );
+      data.viitekorko = {
+        kausi_alkaa: start,
+        kausi_paattyy: periodEnd(start),
+        korko: ref.rate,
+        ekp_perusrahoituskorko: ref.mro,
+        ekp_perusrahoituskorko_alkaen: ref.mroDate,
+        viivastyskorko: ref.rate + 7,
+        viivastyskorko_kaupallinen: ref.rate + 8,
+      };
     }
   }
-  const cur = (list) => rateOn(list, d);
-  const lines = [
-    ["Talletuskorko", cur(dfr)],
-    ["Perusrahoitusoperaatioiden korko", cur(mro)],
-    ["Maksuvalmiusluoton korko", cur(mlf)],
-  ].filter(([, r]) => r);
-  if (lines.length) {
-    out.push("", "EKP:n ohjauskorot:");
-    for (const [name, r] of lines) out.push(`- ${name}: ${fmtDec(r.value)} % (${fmtDate(r.date)} alkaen)`);
-  }
+  data.ohjauskorot = OHJAUSKOROT.map(([tunnus, nimi, k]) => ({ tunnus, nimi, r: rateOn(korot[k], d) }))
+    .filter((x) => x.r)
+    .map(({ tunnus, nimi, r }) => ({ tunnus, nimi, korko: r.value, alkaen: r.date }));
+  data.historia = null;
   if (args.historia) {
-    out.push("", "Viitekorot puolivuosittain (uusin ensin):");
     const starts = [];
     for (let y = +d.slice(0, 4); y >= 2009; y--) for (const m of ["07", "01"]) if (`${y}-${m}-01` <= start) starts.push(`${y}-${m}-01`);
+    data.historia = [];
     for (const s of starts.slice(0, 40)) {
       const r = referenceRate(mro, s);
-      if (r) out.push(`- ${fmtDate(s)}–${fmtDate(periodEnd(s))}: ${fmtDec(r.rate, 1)} %`);
+      if (r) data.historia.push({ kausi_alkaa: s, kausi_paattyy: periodEnd(s), korko: r.rate });
     }
+  }
+  data.lahde = EKP_LAHDE;
+  return data;
+}
+
+function korotTeksti(data) {
+  const out = [`Korot ${fmtDate(data.paiva)}`];
+  const v = data.viitekorko;
+  if (data.viitekorko_ennen_2009) {
+    out.push("", "Viitekorkoa ennen vuotta 2009 ei lasketa (EKP:n perusrahoitusoperaatiot olivat vaihtuvakorkoisia 2000–2008). Katso Suomen Pankin julkaisemat viitekorot.");
+  } else if (v) {
+    out.push(
+      "",
+      `Korkolain viitekorko ${fmtDate(v.kausi_alkaa)}–${fmtDate(v.kausi_paattyy)}: ${fmtDec(v.korko, 1)} %`,
+      `  (EKP:n perusrahoitusoperaatioiden korko ennen kauden alkua ${fmtDec(v.ekp_perusrahoituskorko)} %, voimassa ${fmtDate(v.ekp_perusrahoituskorko_alkaen)} alkaen, pyöristettynä ylöspäin puoleen prosenttiyksikköön; korkolaki 633/1982 12 §)`,
+      `Viivästyskorko: ${fmtDec(v.viivastyskorko, 1)} % (viitekorko + 7 prosenttiyksikköä, korkolaki 4 §)`,
+      `Viivästyskorko kaupallisissa sopimuksissa: ${fmtDec(v.viivastyskorko_kaupallinen, 1)} % (viitekorko + 8 prosenttiyksikköä, korkolaki 4 a §)`,
+    );
+  }
+  if (data.ohjauskorot.length) {
+    out.push("", "EKP:n ohjauskorot:");
+    for (const r of data.ohjauskorot) out.push(`- ${r.nimi}: ${fmtDec(r.korko)} % (${fmtDate(r.alkaen)} alkaen)`);
+  }
+  if (data.historia) {
+    out.push("", "Viitekorot puolivuosittain (uusin ensin):");
+    for (const r of data.historia) out.push(`- ${fmtDate(r.kausi_alkaa)}–${fmtDate(r.kausi_paattyy)}: ${fmtDec(r.korko, 1)} %`);
   }
   out.push(
     "",
@@ -1541,7 +1636,9 @@ const PROVISION_FI = { SelfProducedServices: "oma tuotanto", ProcuredServices: "
 const CHARGE_FI = { Chargeable: "maksullinen", FreeOfCharge: "maksuton", Other: "muu" };
 const cut = (t, n) => (t && t.length > n ? `${t.slice(0, n)} …` : t);
 
-async function haeJulkisiaPalveluja(args) {
+const PALVELUJA_ENINTAAN = 200;
+
+async function haeJulkisiaPalvelujaData(args) {
   const budget = newBudget(15);
   const area = await resolvePtvArea(args.alue, budget);
   if (!area) throw new UserError(`Aluetta "${args.alue}" ei löytynyt. Anna kunta tai hyvinvointialue, esim. "Kymenlaakson hyvinvointialue".`);
@@ -1550,10 +1647,26 @@ async function haeJulkisiaPalveluja(args) {
   const q = String(args.hakusana ?? "").trim().toLowerCase();
   if (q) list = list.filter((x) => String(x.name ?? "").toLowerCase().includes(q));
   list.sort((a, b) => (String(a.name) < String(b.name) ? -1 : String(a.name) > String(b.name) ? 1 : 0));
-  const out = [`Julkiset palvelut, ${area.name}${q ? `, nimessä "${args.hakusana}"` : ""}${args.koko_maa ? " (myös koko maata koskevat)" : ""}: ${list.length} kpl.`, ""];
-  if (!list.length) out.push("Ei osumia. Kokeile sanan osaa (esim. \"koti\") tai ilman hakusanaa.");
-  for (const x of list.slice(0, 200)) out.push(`- ${x.name} (${x.id})`);
-  if (list.length > 200) out.push(`… ${list.length - 200} lisää; rajaa hakusanalla.`);
+  const naytetaan = list.slice(0, PALVELUJA_ENINTAAN);
+  return {
+    alue: area.name,
+    hakusana: q ? String(args.hakusana) : null,
+    koko_maa: args.koko_maa === true,
+    yhteensa: list.length,
+    // Teksti ja rakenne listaavat enintään 200 palvelua (sama raja kuin ennen).
+    palvelut: naytetaan.map((x) => (x.name === undefined || x.name === null ? { tunniste: x.id } : { tunniste: x.id, nimi: x.name })),
+    katkaistu: list.length > naytetaan.length,
+    naytetty: naytetaan.length,
+    rivit_yhteensa: list.length,
+    lahde: { nimi: PTV_SOURCE.replace(/^Lähde: /, ""), linkki: "https://palvelutietovaranto.suomi.fi/" },
+  };
+}
+
+function haeJulkisiaPalvelujaTeksti(d) {
+  const out = [`Julkiset palvelut, ${d.alue}${d.hakusana !== null ? `, nimessä "${d.hakusana}"` : ""}${d.koko_maa ? " (myös koko maata koskevat)" : ""}: ${d.yhteensa} kpl.`, ""];
+  if (!d.yhteensa) out.push("Ei osumia. Kokeile sanan osaa (esim. \"koti\") tai ilman hakusanaa.");
+  for (const x of d.palvelut) out.push(`- ${x.nimi} (${x.tunniste})`);
+  if (d.katkaistu) out.push(`… ${d.yhteensa - d.naytetty} lisää; rajaa hakusanalla.`);
   out.push("", "Palvelun tiedot: julkinen_palvelu (palvelu: tunniste). Luettelossa ovat palvelut, joiden alueeksi on merkitty tämä alue; palvelun tarjoaja voi olla kunta, hyvinvointialue tai valtion virasto.", PTV_SOURCE);
   return clip(out.join("\n"));
 }
@@ -2739,17 +2852,12 @@ async function avoimetTyopaikat(args) {
 }
 
 const HANDLERS = {
-  yrityksen_tiedot: yrityksenTiedot,
   toimipaikat_maakunnittain: toimipaikatMaakunnittain,
   sote_indikaattorit: soteIndikaattorit,
   sote_tilasto: soteTilasto,
-  hintaindeksi,
-  indeksitarkistus,
-  korot,
   yrityksen_talous: yrityksenTalous,
   yhteisoverot,
   tilaston_rakenne: tilastonRakenne,
-  hae_julkisia_palveluja: haeJulkisiaPalveluja,
   julkinen_palvelu: julkinenPalvelu,
   kaupparekisteri_ilmoitukset: kaupparekisteriIlmoitukset,
   saavutettavuusalue,
@@ -2761,8 +2869,6 @@ const HANDLERS = {
   tutkinnon_peruste: tutkinnonPeruste,
   tutkinnon_osaaminen: tutkinnonOsaaminen,
   avoimet_tyopaikat: avoimetTyopaikat,
-  tulevat_paivat: tulevatPaivat,
-  koululomat,
 };
 
 export async function callTool(name, args = {}, env = {}) {
@@ -2837,6 +2943,17 @@ const VUOSI = { anyOf: [{ type: "integer" }, { type: "string" }], description: "
 // Paavon väestöluvut (alueen_vaesto); null = salattu (alle 30 asukasta) tai puuttuu.
 const VAESTO_LUVUT = Object.fromEntries(VAESTO_KENTAT.map(([k]) => [k, LUKU_TAI_NULL]));
 const VAESTO_PAKOLLISET = VAESTO_KENTAT.map(([k]) => k);
+const INDEKSI = {
+  type: "object",
+  properties: { tunnus: { type: "string", enum: ["khi", "elinkustannus"] }, nimi: { type: "string" }, sarja: { type: "string" }, perusvuosi: { type: "string" } },
+  required: ["tunnus", "nimi", "sarja", "perusvuosi"],
+};
+const AJANKOHTA = {
+  type: "object",
+  properties: { ajankohta: { type: "string", description: "vvvv-kk tai vvvv (vuosikeskiarvo)." }, pisteluku: { type: "number" } },
+  required: ["ajankohta", "pisteluku"],
+};
+const JAKSO = { type: "object", properties: { alkaa: { type: "string" }, paattyy: { type: "string" } }, required: ["alkaa", "paattyy"] };
 
 const RAKENNE = {
   etsi_toimiala: {
@@ -3041,6 +3158,257 @@ const RAKENNE = {
       required: ["hakusana", "yhteensa", "sivu", "sivuja", "seuraava", "taulukot", "lahde"],
     },
   },
+  yrityksen_tiedot: {
+    hae: yrityksenTiedotData,
+    teksti: yrityksenTiedotTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        y_tunnus: { type: "string" },
+        loytyi: { type: "boolean", description: "false: Y-tunnuksella ei löytynyt yritystä YTJ:n avoimesta datasta (toiminimet puuttuvat); muut tiedot puuttuvat." },
+        nimi: { type: "string" },
+        tila: { type: "string" },
+        toimiva: { type: "boolean" },
+        tilanteet: { type: "array", items: { type: "string" } },
+        yritysmuoto: { type: "string" },
+        toimiala: NIMI_KOODI,
+        osoite: { type: "string" },
+        rekisteroity: { type: "string", description: "Rekisteröintipäivä vvvv-kk-pp." },
+        muut_nimet: { type: "array", items: { type: "string" }, description: "Aputoiminimet ym." },
+        rekisterit: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { rekisteri: { type: "string" }, alkaen: { type: "string" }, paattyy: { type: "string" } },
+            required: ["rekisteri"],
+          },
+        },
+        paivitetty: { type: "string", description: "Viimeisin muutos YTJ:ssä (lähteen aikaleima)." },
+        huomio: { type: "string" },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["y_tunnus", "loytyi", "huomio", "lahde"],
+    },
+  },
+  hintaindeksi: {
+    hae: hintaindeksiData,
+    teksti: hintaindeksiTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        indeksi: INDEKSI,
+        alkaen: { type: "string", description: "Ensimmäinen kuukausi vvvv-kk." },
+        paattyen: { type: "string", description: "Viimeinen kuukausi vvvv-kk." },
+        viimeisin: { type: "string", description: "Viimeisin julkaistu kuukausi vvvv-kk." },
+        vuosimuutos_peruste: {
+          type: "string",
+          enum: ["virallinen", "laskettu"],
+          description: "virallinen: Tilastokeskuksen vuosimuutos (taulukko 122p); laskettu: 12 kuukauden muutos pisteluvuista.",
+        },
+        kuukaudet: {
+          type: "array",
+          description: "Enintään 240 kuukautta.",
+          items: {
+            type: "object",
+            properties: { kuukausi: { type: "string" }, pisteluku: { type: "number" }, vuosimuutos: { ...LUKU_TAI_NULL, description: "Prosentteina, pyöristämätön." } },
+            required: ["kuukausi", "pisteluku", "vuosimuutos"],
+          },
+        },
+        paivitetty: { type: "string" },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["indeksi", "alkaen", "paattyen", "viimeisin", "vuosimuutos_peruste", "kuukaudet", "lahde"],
+    },
+  },
+  indeksitarkistus: {
+    hae: indeksitarkistusData,
+    teksti: indeksitarkistusTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        indeksi: INDEKSI,
+        vuosikeskiarvot: { type: "boolean", description: "true: ajankohdat ovat vuosia (vvvv), false: kuukausia (vvvv-kk)." },
+        lahtokohta: AJANKOHTA,
+        tarkistus: {
+          type: "object",
+          properties: { ...AJANKOHTA.properties, viimeisin_julkaistu: { type: "boolean" } },
+          required: [...AJANKOHTA.required, "viimeisin_julkaistu"],
+        },
+        muutos_prosenttia: { type: "number", description: "Pyöristämätön (tekstissä 2 desimaalia)." },
+        kerroin: { type: "number", description: "Tarkistuksen pisteluku / lähtökohdan pisteluku, pyöristämätön (tekstissä 4 desimaalia)." },
+        summa: {
+          anyOf: [
+            {
+              type: "object",
+              properties: { alkuperainen: { type: "number" }, tarkistettu: { type: "number" }, muutos: { type: "number" } },
+              required: ["alkuperainen", "tarkistettu", "muutos"],
+            },
+            { type: "null" },
+          ],
+          description: "Pyöristämättömät summat; null, jos summaa ei annettu.",
+        },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["indeksi", "vuosikeskiarvot", "lahtokohta", "tarkistus", "muutos_prosenttia", "kerroin", "summa", "lahde"],
+    },
+  },
+  korot: {
+    hae: korotData,
+    teksti: korotTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        paiva: { type: "string" },
+        viitekorko_ennen_2009: { type: "boolean", description: "true: viitekorkoa ei lasketa (kausi alkaa ennen vuotta 2009)." },
+        viitekorko: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                kausi_alkaa: { type: "string" },
+                kausi_paattyy: { type: "string" },
+                korko: { type: "number", description: "Korkolain 12 §:n viitekorko, %." },
+                ekp_perusrahoituskorko: { type: "number" },
+                ekp_perusrahoituskorko_alkaen: { type: "string" },
+                viivastyskorko: { type: "number", description: "Viitekorko + 7 prosenttiyksikköä (korkolaki 4 §)." },
+                viivastyskorko_kaupallinen: { type: "number", description: "Viitekorko + 8 prosenttiyksikköä (korkolaki 4 a §)." },
+              },
+              required: ["kausi_alkaa", "kausi_paattyy", "korko", "ekp_perusrahoituskorko", "ekp_perusrahoituskorko_alkaen", "viivastyskorko", "viivastyskorko_kaupallinen"],
+            },
+            { type: "null" },
+          ],
+        },
+        ohjauskorot: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              tunnus: { type: "string", enum: OHJAUSKOROT.map(([t]) => t) },
+              nimi: { type: "string" },
+              korko: { type: "number" },
+              alkaen: { type: "string" },
+            },
+            required: ["tunnus", "nimi", "korko", "alkaen"],
+          },
+        },
+        historia: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { kausi_alkaa: { type: "string" }, kausi_paattyy: { type: "string" }, korko: { type: "number" } },
+                required: ["kausi_alkaa", "kausi_paattyy", "korko"],
+              },
+            },
+            { type: "null" },
+          ],
+          description: "Viitekorot puolivuosittain uusin ensin (enintään 40), kun historia: true; muuten null.",
+        },
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["paiva", "viitekorko_ennen_2009", "viitekorko", "ohjauskorot", "historia", "lahde"],
+    },
+  },
+  hae_julkisia_palveluja: {
+    hae: haeJulkisiaPalvelujaData,
+    teksti: haeJulkisiaPalvelujaTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        alue: { type: "string" },
+        hakusana: { anyOf: [{ type: "string" }, { type: "null" }] },
+        koko_maa: { type: "boolean" },
+        yhteensa: { type: "integer" },
+        palvelut: {
+          type: "array",
+          description: `Nimen mukaan, enintään ${PALVELUJA_ENINTAAN}.`,
+          items: {
+            type: "object",
+            properties: { tunniste: { type: "string", description: "julkinen_palvelu-työkalulle." }, nimi: { type: "string" } },
+            required: ["tunniste"],
+          },
+        },
+        katkaistu: { type: "boolean", description: `Palveluja yli ${PALVELUJA_ENINTAAN}; rajaa hakusanalla.` },
+        naytetty: RAJAUS_KENTAT.naytetty,
+        rivit_yhteensa: RAJAUS_KENTAT.rivit_yhteensa,
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["alue", "hakusana", "koko_maa", "yhteensa", "palvelut", ...RAJAUS_PAKOLLISET, "lahde"],
+    },
+  },
+  tulevat_paivat: {
+    hae: tulevatPaivatData,
+    teksti: tulevatPaivatTeksti,
+    // Oma syötteen käsittely: luokat myös pilkuilla eroteltuna merkkijonona ja omat virhetekstit (v1.14.0).
+    tarkistaSyote: false,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        alkaen: { type: "string" },
+        loppuu: { type: "string", description: "Mukaan lukien." },
+        luokat: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }], description: "null = kaikki luokat." },
+        ala: { type: "string" },
+        kunta: { anyOf: [{ type: "string" }, { type: "null" }], description: "Kunta, jonka koululomat ovat mukana." },
+        ennakko_paivia: VALINNAINEN_SIVU,
+        huomautukset: { type: "array", items: { type: "string" } },
+        paivat: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              pvm: { type: "string" },
+              nimi: { type: "string" },
+              luokat: { type: "array", items: { type: "string" } },
+              saanto: { type: "string" },
+              asema: { type: "string" },
+              tarjouksiin: { type: "boolean", description: "false: ei sovi tarjouksiin (muuten kenttää ei ole)." },
+              kampanja_alkaa: { type: "string" },
+              aikavalin_jalkeen: { type: "boolean", description: "Päivä on aikavälin jälkeen, mutta sen kampanja alkaa aikavälillä." },
+              huom: { type: "string" },
+              lahde: LAHDE_SKEEMA,
+              lisalahde: LAHDE_SKEEMA,
+            },
+            required: ["pvm", "nimi", "luokat", "saanto", "aikavalin_jalkeen", "lahde"],
+          },
+        },
+        tarkistettu: { type: "string" },
+        ...RAJAUS_KENTAT,
+        lahde: LAHDE_SKEEMA,
+      },
+      required: ["alkaen", "loppuu", "luokat", "ala", "kunta", "ennakko_paivia", "huomautukset", "paivat", "tarkistettu", ...RAJAUS_PAKOLLISET, "lahde"],
+    },
+  },
+  koululomat: {
+    hae: koululomatData,
+    teksti: koululomatTeksti,
+    tulosSkeema: {
+      type: "object",
+      properties: {
+        kunta: { type: "string" },
+        tila: { type: "string", enum: ["loytyi", "kunta_ei_taulukossa", "lukuvuosi_ei_taulukossa"], description: "Muu kuin loytyi: vain valtakunnalliset säännöt." },
+        lukuvuosi: { type: "string", description: "vvvv-vvvv" },
+        koulu_paattyy_saannon_mukaan: { anyOf: [{ type: "string" }, { type: "null" }] },
+        saannot: { type: "array", items: { type: "string" } },
+        kunnat_taulukossa: { type: "array", items: { type: "string" } },
+        kunnan_lukuvuodet: { type: "array", items: { type: "string" } },
+        loma_ajat: {
+          anyOf: [
+            {
+              type: "object",
+              properties: { alkaa: { type: "string" }, syysloma: JAKSO, joululoma: JAKSO, talviloma: JAKSO, paattyy: { type: "string" } },
+              required: ["alkaa", "syysloma", "joululoma", "talviloma", "paattyy"],
+            },
+            { type: "null" },
+          ],
+        },
+        tarkistettu: { type: "string" },
+        lahde: LAHDE_SKEEMA,
+        lisalahde: LAHDE_SKEEMA,
+      },
+      required: ["kunta", "tila", "lukuvuosi", "koulu_paattyy_saannon_mukaan", "saannot", "kunnat_taulukossa", "loma_ajat", "lahde"],
+    },
+  },
 };
 
 export const TYOKALUT = MAARITTELYT.filter((t) => RAKENTEISET.includes(t.name)).map((t) => {
@@ -3054,6 +3422,7 @@ export const TYOKALUT = MAARITTELYT.filter((t) => RAKENTEISET.includes(t.name)).
     avoin: t.annotations.openWorldHint,
     tulosSkeema: r.tulosSkeema,
     poisRakenteesta: [KAIKKI],
+    tarkistaSyote: r.tarkistaSyote ?? true,
     hae: virheet(r.hae),
     teksti: r.teksti,
   });
@@ -3076,13 +3445,7 @@ function kalVuosiraja(d, nimi) {
     throw new UserError(`${nimi} on vuodelta ${y}. Kalenteri kattaa vuodet ${kal.ENSIMMAINEN_VUOSI}–${kal.VIIMEINEN_VUOSI}, koska luettelot kuvaavat tilannetta ${kal.TARKISTETTU}.`);
 }
 
-function kalLahde(t) {
-  const osat = [`${t.lahde.nimi}, ${t.lahde.url}`];
-  if (t.lisalahde) osat.push(`${t.lisalahde.nimi}, ${t.lisalahde.url}`);
-  return `Lähde: ${osat.join("; ")} (tarkistettu ${kal.TARKISTETTU})`;
-}
-
-async function tulevatPaivat(args) {
+async function tulevatPaivatData(args) {
   const alku = args.alkaen ? kalPvm(args.alkaen, "alkaen") : kal.tanaan();
   kalVuosiraja(alku, "Aikavälin alku");
   let loppu;
@@ -3122,42 +3485,76 @@ async function tulevatPaivat(args) {
   }
 
   const rivit = kal.paivatValilla(alku, loppu, { luokat, ala, kunta, ennakko });
-  const out = [
-    `Tulevat päivät ${kal.fiPvm(alku)}–${kal.fiPvm(loppu)}${luokat ? `, luokat: ${luokat.join(", ")}` : ""}${ala !== "kaikki" ? `, ala: ${ala}` : ""}${kunta ? `, koululomat: ${kunta}` : ""}${ennakko ? `, kampanja ${ennakko} päivää ennen` : ""}`,
-    `Päiviä: ${rivit.length}`,
+  const lahdeOlio = (l) => ({ nimi: l.nimi, linkki: l.url });
+  const data = {
+    alkaen: kal.iso(alku),
+    loppuu: kal.iso(loppu),
+    luokat,
+    ala,
+    kunta,
+    ennakko_paivia: ennakko || null,
+    huomautukset: huom,
+    paivat: rivit.map((t) => {
+      const p = { pvm: kal.iso(t.date), nimi: t.nimi, luokat: t.luokat, saanto: t.saanto, aikavalin_jalkeen: t.date > loppu };
+      if (t.asema) p.asema = t.asema;
+      if (t.tarjouksiin === false) p.tarjouksiin = false;
+      if (t.kampanja) p.kampanja_alkaa = kal.iso(t.kampanja);
+      if (t.huom) p.huom = t.huom;
+      p.lahde = lahdeOlio(t.lahde);
+      if (t.lisalahde) p.lisalahde = lahdeOlio(t.lisalahde);
+      return p;
+    }),
+    tarkistettu: kal.TARKISTETTU,
+    lahde: { nimi: `Markkinointikalenteri, käsin ylläpidetty (tarkistettu ${kal.TARKISTETTU}); päiväkohtaiset lähteet paivat-listassa` },
+  };
+  return rajaaRivit(data, "paivat", tulevatPaivatOsat);
+}
+
+/** Tekstin osat: jokainen päivä on yksi (monirivinen) rivi, joten rajaus koskee kokonaisia päiviä. */
+function tulevatPaivatOsat(d, kaikki) {
+  const alku = kal.isoPvm(d.alkaen);
+  const alkuRivit = [
+    `Tulevat päivät ${kal.fiPvm(alku)}–${kal.fiPvm(kal.isoPvm(d.loppuu))}${d.luokat ? `, luokat: ${d.luokat.join(", ")}` : ""}${d.ala !== "kaikki" ? `, ala: ${d.ala}` : ""}${d.kunta ? `, koululomat: ${d.kunta}` : ""}${d.ennakko_paivia ? `, kampanja ${d.ennakko_paivia} päivää ennen` : ""}`,
+    `Päiviä: ${d.rivit_yhteensa ?? kaikki.length}`,
     "",
   ];
-  let ksl = false;
-  for (const t of rivit) {
-    const luokkaTekstit = t.luokat.map((l) => kal.LUOKAT[l]).join("; ");
-    out.push(`${kal.fiPvmVkp(t.date)} ${t.nimi} [${luokkaTekstit}]${t.date > loppu ? " (aikavälin jälkeen)" : ""}`);
-    const piste = (x) => (x.endsWith(".") ? x : `${x}.`);
-    const tiedot = [`Sääntö: ${piste(t.saanto)}`];
-    if (t.asema) tiedot.push(`Asema: ${t.asema}.`);
-    if (t.tarjouksiin === false) tiedot.push("Ei tarjouksiin.");
-    if (t.kampanja) tiedot.push(`Kampanja alkaa: ${kal.fiPvmVkp(t.kampanja)} (${ennakko} päivää ennen${t.kampanja < alku ? ", ennen aikavälin alkua" : ""}).`);
-    out.push(`  ${tiedot.join(" ")}`);
-    if (t.huom) {
-      out.push(`  Huom: ${t.huom}`);
-      if (t.huom.includes("2 luku 11 §")) ksl = true;
-    }
-    out.push(`  ${kalLahde(t)}`);
-  }
-  if (!rivit.length) out.push("Aikavälillä ei ole päiviä valituilla rajauksilla.");
-  out.push("");
-  out.push(...huom);
-  if (ksl) out.push("Alennusmarkkinoinnin huomautus koskee kaikkia tavaroiden alennuskampanjoita, myös joulun alennusmyyntejä.");
-  out.push(kal.YLEINEN_HUOM);
-  if (kunta || rivit.some((t) => t.luokat.includes("koululoma"))) out.push(kal.KOULU_HUOM);
-  out.push("Työkalu antaa päivät ja lähteet, ei markkinointitekstejä. Teemapäivän suomenkielistä nimeä, jonka merkinnän mukaan virallista tai vakiintunutta nimeä ei ole, ei pidä esittää virallisena.");
-  out.push(KAL_LAHDE_RIVI);
-  return clip(out.join("\n"));
+  const piste = (x) => (x.endsWith(".") ? x : `${x}.`);
+  const lahdeTeksti = (p) => {
+    const osat = [`${p.lahde.nimi}, ${p.lahde.linkki}`];
+    if (p.lisalahde) osat.push(`${p.lisalahde.nimi}, ${p.lisalahde.linkki}`);
+    return `Lähde: ${osat.join("; ")} (tarkistettu ${d.tarkistettu})`;
+  };
+  const rivit = kaikki.map((p) => {
+    const pvm = kal.isoPvm(p.pvm);
+    const r = [`${kal.fiPvmVkp(pvm)} ${p.nimi} [${p.luokat.map((l) => kal.LUOKAT[l]).join("; ")}]${p.aikavalin_jalkeen ? " (aikavälin jälkeen)" : ""}`];
+    const tiedot = [`Sääntö: ${piste(p.saanto)}`];
+    if (p.asema) tiedot.push(`Asema: ${p.asema}.`);
+    if (p.tarjouksiin === false) tiedot.push("Ei tarjouksiin.");
+    if (p.kampanja_alkaa) tiedot.push(`Kampanja alkaa: ${kal.fiPvmVkp(kal.isoPvm(p.kampanja_alkaa))} (${d.ennakko_paivia} päivää ennen${kal.isoPvm(p.kampanja_alkaa) < alku ? ", ennen aikavälin alkua" : ""}).`);
+    r.push(`  ${tiedot.join(" ")}`);
+    if (p.huom) r.push(`  Huom: ${p.huom}`);
+    r.push(`  ${lahdeTeksti(p)}`);
+    return r.join("\n");
+  });
+  const loppu = [];
+  if (!kaikki.length) loppu.push("Aikavälillä ei ole päiviä valituilla rajauksilla.");
+  loppu.push("", ...d.huomautukset);
+  if (kaikki.some((p) => p.huom?.includes("2 luku 11 §"))) loppu.push("Alennusmarkkinoinnin huomautus koskee kaikkia tavaroiden alennuskampanjoita, myös joulun alennusmyyntejä.");
+  loppu.push(kal.YLEINEN_HUOM);
+  if (d.kunta || kaikki.some((p) => p.luokat.includes("koululoma"))) loppu.push(kal.KOULU_HUOM);
+  loppu.push("Työkalu antaa päivät ja lähteet, ei markkinointitekstejä. Teemapäivän suomenkielistä nimeä, jonka merkinnän mukaan virallista tai vakiintunutta nimeä ei ole, ei pidä esittää virallisena.");
+  loppu.push(KAL_LAHDE_RIVI);
+  return rivitOsiksi(alkuRivit, rivit, loppu);
+}
+
+function tulevatPaivatTeksti(d) {
+  return osatTekstiksi(tulevatPaivatOsat(d, d[KAIKKI] ?? d.paivat));
 }
 
 const KOULU_SAANTO_LAHDE =
   "Lähde: perusopetuslaki 628/1998, 23 §, https://www.finlex.fi/fi/lainsaadanto/1998/628; perusopetusasetus 852/1998, 7 §, https://www.finlex.fi/fi/lainsaadanto/1998/852";
 
-async function koululomat(args) {
+async function koululomatData(args) {
   const syote = String(args.kunta ?? "").trim();
   if (!syote) throw new UserError("Anna kunta, esim. \"Kotka\".");
   let lukuvuosi = args.lukuvuosi ? String(args.lukuvuosi).trim().replace(/[–—/]/g, "-").replace(/\s+/g, "") : kal.kuluvaLukuvuosi(kal.tanaan());
@@ -3170,42 +3567,74 @@ async function koululomat(args) {
       (loppuVuosi >= kal.ENSIMMAINEN_VUOSI && loppuVuosi <= kal.VIIMEINEN_VUOSI ? `, lukuvuonna ${lv} säännön mukaan ${kal.fiPvmVkp(kal.koulunPaattyminen(loppuVuosi))}.` : "."),
     "Syys-, joulu- ja talviloman ajankohdat päättää kunta (opetuksen järjestäjä), joten niitä ei voi laskea.",
   ];
+  const data = {
+    kunta: syote,
+    tila: "kunta_ei_taulukossa",
+    lukuvuosi,
+    koulu_paattyy_saannon_mukaan:
+      loppuVuosi >= kal.ENSIMMAINEN_VUOSI && loppuVuosi <= kal.VIIMEINEN_VUOSI ? kal.iso(kal.koulunPaattyminen(loppuVuosi)) : null,
+    saannot,
+    kunnat_taulukossa: kal.kunnatTaulukossa(),
+    loma_ajat: null,
+    lahde: KOULU_LAHDE,
+  };
   const kunta = kal.etsiKunta(syote);
-  if (!kunta) {
-    return [
-      `Kunnan "${syote}" koululomia ei ole taulukossa. Mukana: ${kal.kunnatTaulukossa().join(", ")}.`,
-      "Tarkista loma-ajat kunnan sivuilta tai Opetushallituksen luettelosta (maakuntien pääkaupungit): https://www.oph.fi/fi/uutiset/2026/koulujen-tyo-ja-loma-ajat-lukuvuonna-2026-2027",
-      "",
-      ...saannot,
-      "",
-      `${KOULU_SAANTO_LAHDE}; Opetushallitus, https://www.oph.fi/fi/uutiset/2026/koulujen-tyo-ja-loma-ajat-lukuvuonna-2026-2027`,
-    ].join("\n");
-  }
+  if (!kunta) return data;
+  data.kunta = kunta;
   const r = kal.KOULULOMAT.find((x) => x.kunta === kunta && x.lukuvuosi === lukuvuosi);
   if (!r) {
-    const muut = kal.KOULULOMAT.filter((x) => x.kunta === kunta).map((x) => x.lukuvuosi.replace("-", "–"));
+    data.tila = "lukuvuosi_ei_taulukossa";
+    data.kunnan_lukuvuodet = kal.KOULULOMAT.filter((x) => x.kunta === kunta).map((x) => x.lukuvuosi);
+    return data;
+  }
+  data.tila = "loytyi";
+  data.loma_ajat = { alkaa: r.alkaa, syysloma: jaksoOlio(r.syysloma), joululoma: jaksoOlio(r.joululoma), talviloma: jaksoOlio(r.talviloma), paattyy: r.paattyy };
+  data.tarkistettu = r.tarkistettu;
+  data.lahde = { nimi: r.lahde.nimi, linkki: r.lahde.url };
+  if (r.lisalahde) data.lisalahde = { nimi: r.lisalahde.nimi, linkki: r.lisalahde.url };
+  return data;
+}
+
+const OPH_LOMAT = "https://www.oph.fi/fi/uutiset/2026/koulujen-tyo-ja-loma-ajat-lukuvuonna-2026-2027";
+const KOULU_LAHDE = { nimi: "Perusopetuslaki 628/1998, 23 § ja perusopetusasetus 852/1998, 7 § (Finlex)", linkki: "https://www.finlex.fi/fi/lainsaadanto/1998/628" };
+const jaksoOlio = ([alkaa, paattyy]) => ({ alkaa, paattyy });
+
+function koululomatTeksti(data) {
+  const lv = data.lukuvuosi.replace("-", "–");
+  if (data.tila === "kunta_ei_taulukossa") {
     return [
-      `Kunnan ${kunta} lukuvuoden ${lv} loma-aikoja ei ole taulukossa (mukana: ${muut.join(", ")}). Taulukko päivitetään käsin, kun Opetushallitus julkaisee luettelon (yleensä huhtikuussa). Tarkista loma-ajat kunnan sivuilta.`,
+      `Kunnan "${data.kunta}" koululomia ei ole taulukossa. Mukana: ${data.kunnat_taulukossa.join(", ")}.`,
+      `Tarkista loma-ajat kunnan sivuilta tai Opetushallituksen luettelosta (maakuntien pääkaupungit): ${OPH_LOMAT}`,
       "",
-      ...saannot,
+      ...data.saannot,
+      "",
+      `${KOULU_SAANTO_LAHDE}; Opetushallitus, ${OPH_LOMAT}`,
+    ].join("\n");
+  }
+  if (data.tila === "lukuvuosi_ei_taulukossa") {
+    return [
+      `Kunnan ${data.kunta} lukuvuoden ${lv} loma-aikoja ei ole taulukossa (mukana: ${data.kunnan_lukuvuodet.map((x) => x.replace("-", "–")).join(", ")}). Taulukko päivitetään käsin, kun Opetushallitus julkaisee luettelon (yleensä huhtikuussa). Tarkista loma-ajat kunnan sivuilta.`,
+      "",
+      ...data.saannot,
       "",
       KOULU_SAANTO_LAHDE,
     ].join("\n");
   }
+  const r = data.loma_ajat;
   const d = (s) => kal.fiPvmVkp(kal.isoPvm(s));
-  const jakso = ([a, b]) => `${d(a)}–${d(b)}`;
+  const jakso = (j) => `${d(j.alkaa)}–${d(j.paattyy)}`;
   return [
-    `Peruskoulujen työ- ja loma-ajat, ${kunta}, lukuvuosi ${lv}`,
+    `Peruskoulujen työ- ja loma-ajat, ${data.kunta}, lukuvuosi ${lv}`,
     `Koulu alkaa: ${d(r.alkaa)}`,
     `Syysloma: ${jakso(r.syysloma)}`,
     `Joululoma: ${jakso(r.joululoma)}`,
     `Talviloma: ${jakso(r.talviloma)}`,
     `Koulu päättyy: ${d(r.paattyy)}`,
     "",
-    `Lähde: ${r.lahde.nimi}, ${r.lahde.url}${r.lisalahde ? `; ${r.lisalahde.nimi}, ${r.lisalahde.url}` : ""} (tarkistettu ${r.tarkistettu})`,
+    `Lähde: ${data.lahde.nimi}, ${data.lahde.linkki}${data.lisalahde ? `; ${data.lisalahde.nimi}, ${data.lisalahde.linkki}` : ""} (tarkistettu ${data.tarkistettu})`,
     kal.KOULU_HUOM,
     "Tiedot ovat käsin ylläpidettyjä ja ne päivitetään kerran vuodessa.",
     "",
-    ...saannot,
+    ...data.saannot,
   ].join("\n");
 }
