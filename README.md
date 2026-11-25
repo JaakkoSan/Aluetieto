@@ -68,6 +68,23 @@ THL:n ohjeen mukaan Sotkanetin REST-rajapinta on tarkoitettu tietojen noutamisee
 - Ladattavat indikaattorit ovat listassa `src/sotkanet.js` (`INDICATORS`). Lisää tunnus listaan, niin seuraava ajo hakee sen. Mukana vain THL:n ja Tilastokeskuksen tuottamia indikaattoreita (CC BY 4.0); muiden tuottajien (esim. Kela, Valtiokonttori) käyttöehdot pitää tarkistaa erikseen.
 - Tallennetaan kuusi viimeisintä vuotta, alueina kunnat, hyvinvointialueet, maakunnat, seutukunnat ja koko maa.
 
+## Rakenteinen tulos
+
+Osa työkaluista antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent`, kuvattu työkalun `outputSchema`ssa), jotta tuloksia voi käsitellä myös koodina. Teksti on sama kuin ennen. Muut työkalut antavat vain tekstin.
+
+| Työkalu | Rakenteisen tuloksen kentät |
+|---|---|
+| `etsi_toimiala` | `hakusana`, `yhteensa`, `osumat` (`koodi`, `nimi`, `taso`; enintään 40) |
+| `hae_yrityksia` | `toimiala`, `sivu`, `sivuja`, `yhteensa`, `seuraava`, `vain_toimivat`, `yritykset`, `huomio` |
+| `tilasto` | `taulukko`, `otsikko`, `paivitetty`, `rajaus`, `oletusvalinnat`, `yksikot`, `muuttujat`, `rivit` (`tekstit`, `arvo`, `tila`), `huomiot` |
+| `alueen_vaesto` | `alue`, `vuosi`, `postinumeroalueet` (asukkaat, naiset, miehet, ikäryhmät, keski-ikä, mediaanitulo; salattu = `null`), `yhteensa` (useammalla alueella), `tuntemattomat` |
+| `aluetarkistus` | `toimiala`, `alue`, `kohderyhma`, `vuosi`, `postinumeroalueet` (`yrityksia`, `vaesto`, `asukasta_per_yritys`), `yhteensa`, `tuntemattomat`, `osin_laskematta`, `nayta_yritykset`, `yritykset`, `huomio`, `lahteet` |
+| `hae_tilastoja` | `hakusana`, `yhteensa`, `sivu`, `sivuja`, `seuraava`, `taulukot` (`tunnus`, `otsikko`, `paivitetty`, `linkki`) |
+
+- Jokaisessa tuloksessa on `lahde` (`nimi`, `linkki`).
+- Rakenteinen tulos rajataan samaan 50 000 merkin rajaan kuin teksti: mukana ovat vain tekstissä kokonaan näkyvät rivit, ja `katkaistu`, `naytetty` ja `rivit_yhteensa` kertovat rajauksen (`hae_yrityksia`, `tilasto`, `aluetarkistus`).
+- Syöte tarkistetaan näissä työkaluissa skeemaa vasten: väärän tyyppinen arvo on syötevirhe.
+
 ## Käyttörajoitus ja merkinnät
 
 - 30 työkalukutsua minuutissa per MCP-istunto ja 300 per IP-osoite (Cloudflare Rate Limiting).

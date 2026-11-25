@@ -282,7 +282,10 @@ for (const [name, args, pred, maxFetch] of cases) {
   };
   const lista = (await rpc("tools/list", {})).result.tools;
   const rakenteiset = lista.filter((t) => t.outputSchema).map((t) => t.name).sort();
-  check(JSON.stringify(rakenteiset) === '["etsi_toimiala","hae_yrityksia","tilasto"]', `rakenteinen: outputSchema kolmella työkalulla (${rakenteiset.join(", ")})`);
+  check(
+    JSON.stringify(rakenteiset) === '["alueen_vaesto","aluetarkistus","etsi_toimiala","hae_tilastoja","hae_yrityksia","tilasto"]',
+    `rakenteinen: outputSchema kuudella työkalulla (${rakenteiset.join(", ")})`,
+  );
   check(!varoitukset.length, `rakenteinen: ei testitilan varoituksia${varoitukset.length ? ` (${varoitukset.join("; ")})` : ""}`);
   const e = await kutsu("etsi_toimiala", { hakusana: "962" });
   check(!e.isError && e.structuredContent.osumat.some((o) => o.koodi === "96220" && o.taso === 5) && e.content[0].text.includes("96220 Kauneudenhoitopalvelut"), "rakenteinen: etsi_toimiala osumat ja teksti");
@@ -309,6 +312,32 @@ for (const [name, args, pred, maxFetch] of cases) {
   check(!p.isError && ps.katkaistu === true && ps.naytetty === ps.rivit.length && ps.naytetty < ps.rivit_yhteensa && p.content[0].text.includes("Tuloste katkaistu") && p.content[0].text.includes(`\n${viimRivi}`) && JSON.stringify(ps).length < 100000, `rakenteinen: tilasto rajattu tekstin rajaan (${ps?.naytetty}/${ps?.rivit_yhteensa})`);
   const t = await kutsu("tilasto", { taulukko: "huono" });
   check(t.isError && t.content[0].text.includes("alue/taulukko"), "rakenteinen: liittimen syötevirheen teksti ennallaan");
+  // 1.16.0: alueen_vaesto, aluetarkistus ja hae_tilastoja.
+  const av = await kutsu("alueen_vaesto", { postinumerot: ["48100", "48600"] });
+  const avs = av.structuredContent;
+  check(
+    !av.isError && avs.postinumeroalueet.length === 2 && avs.postinumeroalueet.every((r) => r.asukkaat > 0) && avs.yhteensa.asukkaat === avs.postinumeroalueet[0].asukkaat + avs.postinumeroalueet[1].asukkaat && av.content[0].text.startsWith(`Väestö ${avs.vuosi}, `),
+    "rakenteinen: alueen_vaesto alueet, summa ja vuosi",
+  );
+  const av1 = await kutsu("alueen_vaesto", { postinumerot: ["48100"] });
+  check(!av1.isError && av1.structuredContent.yhteensa === null, "rakenteinen: alueen_vaesto yksi alue, yhteensa null");
+  const at = await kutsu("aluetarkistus", { toimiala: "96220", postinumerot: ["48100", "48600"], kohderyhma: "naiset" });
+  const ats = at.structuredContent;
+  const atRivit = at.content[0].text.split("\n").filter((l) => l.startsWith("- ")).length;
+  check(
+    !at.isError && ats.kohderyhma.tunnus === "naiset" && ats.postinumeroalueet.length === 2 && ats.yhteensa.yrityksia === ats.postinumeroalueet.reduce((s, r) => s + r.yrityksia, 0) && ats.yritykset.length === atRivit && ats.katkaistu === false && ats.rivit_yhteensa === atRivit && ats.lahteet.length === 2,
+    `rakenteinen: aluetarkistus alueet, yritykset (${atRivit}) ja lähteet`,
+  );
+  const at2 = await kutsu("aluetarkistus", { toimiala: "96220", postinumerot: ["48100"], nayta_yritykset: false });
+  check(!at2.isError && at2.structuredContent.yritykset.length === 0 && at2.structuredContent.nayta_yritykset === false && !at2.content[0].text.includes("Yritykset:"), "rakenteinen: aluetarkistus ilman yrityslistaa");
+  const ht = await kutsu("hae_tilastoja", { hakusana: "väestö" });
+  const hts = ht.structuredContent;
+  check(
+    !ht.isError && hts.taulukot.length === 20 && hts.seuraava === 2 && hts.sivuja > 1 && hts.taulukot.every((x) => ht.content[0].text.includes(`${x.tunnus} ${x.otsikko}`)),
+    "rakenteinen: hae_tilastoja taulukot ja sivutus",
+  );
+  const ht0 = await kutsu("hae_tilastoja", { hakusana: "qwxzyv" });
+  check(!ht0.isError && ht0.structuredContent.yhteensa === 0 && ht0.structuredContent.taulukot.length === 0 && ht0.content[0].text.includes("ei löytynyt"), "rakenteinen: hae_tilastoja ei osumia");
 }
 
 // Salainen polku: kun MCP_PATH_SECRET on asetettu, vain /mcp/<salaisuus> vastaa (sama kuin ennen runkoa).
