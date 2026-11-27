@@ -126,6 +126,7 @@ const MAARITTELYT = [
         ...areaProps,
         kohderyhma: { type: "string", enum: Object.keys(TARGETS), description: "Väestöryhmä, johon toimijamäärää verrataan (oletus kaikki)." },
         nayta_yritykset: { type: "boolean", description: "Listaa löydetyt yritykset (oletus true)." },
+        sivu: { type: "integer", minimum: 1, description: "Yrityslistan sivu (oletus 1, 100 yritystä sivulla). Postinumeroalueiden taulukko ja summat ovat aina kaikista yrityksistä." },
       },
       required: ["toimiala"],
     },
@@ -893,6 +894,9 @@ function alueenVaestoTeksti(d) {
 
 const pyorista1 = (x) => Math.round(x * 10) / 10;
 
+/** Aluetarkistuksen yrityslistan sivukoko. */
+const YRITYKSIA_SIVULLA = 100;
+
 async function aluetarkistusData(args) {
   const budget = newBudget();
   const ind = resolveIndustry(args.toimiala);
@@ -943,7 +947,12 @@ async function aluetarkistusData(args) {
   const nayta = args.nayta_yritykset !== false;
   // Postinumerot ovat numeromerkkijonoja: tavallinen vertailu (ei ICU-lajittelua).
   const pcOf = (c) => address(c)?.postCode ?? "";
-  const yritykset = nayta ? [...byId.values()].sort((a, b) => (pcOf(a) < pcOf(b) ? -1 : pcOf(a) > pcOf(b) ? 1 : 0)).map(yritysData) : [];
+  const kaikkiYritykset = nayta ? [...byId.values()].sort((a, b) => (pcOf(a) < pcOf(b) ? -1 : pcOf(a) > pcOf(b) ? 1 : 0)) : [];
+  // Yrityslista sivutetaan (100/sivu); postinumeroalueiden taulukko ja summat ovat aina kaikista yrityksistä.
+  const yritysMaara = kaikkiYritykset.length;
+  const sivuja = Math.max(Math.ceil(yritysMaara / YRITYKSIA_SIVULLA), 1);
+  const sivu = Math.max(1, Math.floor(Number(args.sivu)) || 1);
+  const yritykset = kaikkiYritykset.slice((sivu - 1) * YRITYKSIA_SIVULLA, sivu * YRITYKSIA_SIVULLA).map(yritysData);
   const data = {
     toimiala: ind.name ? { koodi: ind.code, nimi: ind.name } : { koodi: ind.code },
     alue: label,
@@ -959,6 +968,10 @@ async function aluetarkistusData(args) {
     tuntemattomat: pop.unknown,
     osin_laskematta: truncated,
     nayta_yritykset: nayta,
+    sivu,
+    sivuja,
+    seuraava: sivu < sivuja ? sivu + 1 : null,
+    yritykset_yhteensa: yritysMaara,
     yritykset,
     huomio: YTJ_NOTE,
     lahde: { nimi: "Patentti- ja rekisterihallitus, YTJ avoin data; Tilastokeskus, Paavo (CC BY 4.0)", linkki: YTJ_LAHDE.linkki },
@@ -987,8 +1000,15 @@ function aluetarkistusOsat(d, kaikki) {
   );
   if (d.tuntemattomat.length) lines.push(`Postinumerot, joille ei ole Paavo-tietoa: ${d.tuntemattomat.join(", ")}`);
   if (d.osin_laskematta) lines.push("Huom: jollakin postinumerolla oli yli 300 osumaa, joten kaikkia ei laskettu.");
-  if (kaikki.length) lines.push("", "Yritykset:");
+  const sivutettu = d.sivuja > 1 || d.sivu > 1;
+  const ensimmainen = (d.sivu - 1) * YRITYKSIA_SIVULLA + 1;
+  if (kaikki.length) {
+    lines.push("", sivutettu ? `Yritykset: sivu ${d.sivu}/${d.sivuja}, yritykset ${ensimmainen}–${ensimmainen + kaikki.length - 1} / ${d.yritykset_yhteensa}:` : "Yritykset:");
+  } else if (d.yritykset_yhteensa > 0) {
+    lines.push("", `Yrityslistassa ei ole sivua ${d.sivu}: yrityksiä on ${d.yritykset_yhteensa}, sivuja ${d.sivuja}.`);
+  }
   const loppu = [
+    ...(d.seuraava ? ["", `Lisää yrityksiä: sivu ${d.seuraava}.`] : []),
     "",
     d.huomio,
     "Toimialatieto on yrityksen ilmoittama päätoimiala; sivutoimialoja ei näy. Yritys lasketaan käynti- tai postiosoitteen postinumeron mukaan.",
@@ -3119,13 +3139,17 @@ const RAKENNE = {
         tuntemattomat: { type: "array", items: { type: "string" } },
         osin_laskematta: { type: "boolean", description: "Jollakin postinumerolla oli yli 300 osumaa, joten kaikkia ei laskettu." },
         nayta_yritykset: { type: "boolean", description: "false: yrityksiä ei listattu (yritykset tyhjä)." },
-        yritykset: { type: "array", items: YRITYS, description: "Löydetyt toimivat yritykset postinumeron mukaan." },
+        sivu: { type: "integer", description: "Yrityslistan sivu (100 yritystä/sivu)." },
+        sivuja: { type: "integer", description: "Yrityslistan sivuja yhteensä (vähintään 1)." },
+        seuraava: VALINNAINEN_SIVU,
+        yritykset_yhteensa: { type: "integer", description: "Löydettyjä toimivia yrityksiä yhteensä kaikilla sivuilla (0, jos nayta_yritykset on false)." },
+        yritykset: { type: "array", items: YRITYS, description: "Tämän sivun toimivat yritykset postinumeron mukaan (enintään 100)." },
         huomio: { type: "string" },
         ...RAJAUS_KENTAT,
         lahde: LAHDE_SKEEMA,
         lahteet: { type: "array", items: LAHDE_SKEEMA },
       },
-      required: ["toimiala", "alue", "kohderyhma", "vuosi", "postinumeroalueet", "yhteensa", "tuntemattomat", "osin_laskematta", "nayta_yritykset", "yritykset", "huomio", ...RAJAUS_PAKOLLISET, "lahde", "lahteet"],
+      required: ["toimiala", "alue", "kohderyhma", "vuosi", "postinumeroalueet", "yhteensa", "tuntemattomat", "osin_laskematta", "nayta_yritykset", "sivu", "sivuja", "seuraava", "yritykset_yhteensa", "yritykset", "huomio", ...RAJAUS_PAKOLLISET, "lahde", "lahteet"],
     },
   },
   hae_tilastoja: {
