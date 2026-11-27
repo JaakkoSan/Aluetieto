@@ -284,7 +284,7 @@ for (const [name, args, pred, maxFetch] of cases) {
   const rakenteiset = lista.filter((t) => t.outputSchema).map((t) => t.name).sort();
   check(
     JSON.stringify(rakenteiset) ===
-      '["alueen_vaesto","aluetarkistus","etsi_toimiala","hae_julkisia_palveluja","hae_tilastoja","hae_yrityksia","hintaindeksi","indeksitarkistus","koululomat","korot","tilasto","tulevat_paivat","yrityksen_tiedot"]',
+      '["alueen_vaesto","aluetarkistus","etsi_toimiala","hae_julkisia_palveluja","hae_tilastoja","hae_yrityksia","hintaindeksi","indeksitarkistus","korot","koululomat","tilasto","tulevat_paivat","yrityksen_tiedot"]',
     `rakenteinen: outputSchema 13 työkalulla (${rakenteiset.join(", ")})`,
   );
   check(!varoitukset.length, `rakenteinen: ei testitilan varoituksia${varoitukset.length ? ` (${varoitukset.join("; ")})` : ""}`);
