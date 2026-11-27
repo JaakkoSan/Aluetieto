@@ -78,7 +78,7 @@ Osa työkaluista antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent
 | `hae_yrityksia` | `toimiala`, `sivu`, `sivuja`, `yhteensa`, `seuraava`, `vain_toimivat`, `yritykset`, `huomio` |
 | `tilasto` | `taulukko`, `otsikko`, `paivitetty`, `rajaus`, `oletusvalinnat`, `yksikot`, `muuttujat`, `rivit` (`tekstit`, `arvo`, `tila`), `huomiot` |
 | `alueen_vaesto` | `alue`, `vuosi`, `postinumeroalueet` (asukkaat, naiset, miehet, ikäryhmät, keski-ikä, mediaanitulo; salattu = `null`), `yhteensa` (useammalla alueella), `tuntemattomat` |
-| `aluetarkistus` | `toimiala`, `alue`, `kohderyhma`, `vuosi`, `postinumeroalueet` (`yrityksia`, `vaesto`, `asukasta_per_yritys`), `yhteensa`, `tuntemattomat`, `osin_laskematta`, `nayta_yritykset`, `yritykset`, `huomio`, `lahteet` |
+| `aluetarkistus` | `toimiala`, `alue`, `kohderyhma`, `vuosi`, `postinumeroalueet` (`yrityksia`, `vaesto`, `asukasta_per_yritys`), `yhteensa`, `tuntemattomat`, `osin_laskematta`, `nayta_yritykset`, `sivu`, `sivuja`, `seuraava`, `yritykset_yhteensa`, `yritykset` (enintään 100 sivulla), `huomio`, `lahteet` |
 | `hae_tilastoja` | `hakusana`, `yhteensa`, `sivu`, `sivuja`, `seuraava`, `taulukot` (`tunnus`, `otsikko`, `paivitetty`, `linkki`) |
 | `yrityksen_tiedot` | `y_tunnus`, `loytyi`, `nimi`, `tila`, `toimiva`, `tilanteet`, `yritysmuoto`, `toimiala`, `osoite`, `rekisteroity`, `muut_nimet`, `rekisterit` (`rekisteri`, `alkaen`, `paattyy`), `paivitetty`, `huomio` |
 | `hintaindeksi` | `indeksi`, `alkaen`, `paattyen`, `viimeisin`, `vuosimuutos_peruste`, `kuukaudet` (`kuukausi`, `pisteluku`, `vuosimuutos`), `paivitetty` |
@@ -91,6 +91,7 @@ Osa työkaluista antaa tekstin rinnalla rakenteisen tuloksen (`structuredContent
 - Jokaisessa tuloksessa on `lahde` (`nimi`, `linkki`).
 - Luvut ovat pyöristämättömiä; teksti pyöristää ne kuten ennen. Kuukaudet ja ajankohdat muodossa `vvvv-kk` (vuosikeskiarvo `vvvv`), päivät `vvvv-kk-pp`.
 - Rakenteinen tulos rajataan samaan 50 000 merkin rajaan kuin teksti: mukana ovat vain tekstissä kokonaan näkyvät rivit, ja `katkaistu`, `naytetty` ja `rivit_yhteensa` kertovat rajauksen (`hae_yrityksia`, `tilasto`, `aluetarkistus`, `tulevat_paivat`; `hae_julkisia_palveluja` 200 palvelun rajaan).
+- `aluetarkistus` sivuttaa yrityslistan: enintään 100 yritystä sivulla ja valinnainen `sivu` (oletus 1). `sivu`, `sivuja`, `seuraava` ja `yritykset_yhteensa` kertovat sivutuksen; `naytetty`, `katkaistu` ja `rivit_yhteensa` koskevat haettua sivua. Postinumeroalueiden taulukko ja `yhteensa`-summat ovat aina kaikista yrityksistä.
 - Syöte tarkistetaan näissä työkaluissa skeemaa vasten: väärän tyyppinen arvo on syötevirhe. Poikkeus on `tulevat_paivat`, joka hyväksyy luokat myös pilkuilla eroteltuna merkkijonona ja tarkistaa syötteen itse.
 
 ## Käyttörajoitus ja merkinnät

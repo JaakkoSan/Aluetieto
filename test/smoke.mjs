@@ -331,6 +331,28 @@ for (const [name, args, pred, maxFetch] of cases) {
   );
   const at2 = await kutsu("aluetarkistus", { toimiala: "96220", postinumerot: ["48100"], nayta_yritykset: false });
   check(!at2.isError && at2.structuredContent.yritykset.length === 0 && at2.structuredContent.nayta_yritykset === false && !at2.content[0].text.includes("\nYritykset:\n"), "rakenteinen: aluetarkistus ilman yrityslistaa");
+  // 1.18.0: aluetarkistuksen yrityslista sivutetaan (100/sivu); taulukko ja summat ovat kaikista yrityksistä.
+  check(at.structuredContent.sivu === 1 && at.structuredContent.sivuja === 1 && at.structuredContent.seuraava === null && at.structuredContent.yritykset_yhteensa === atRivit && !at.content[0].text.includes("Lisää yrityksiä"), "rakenteinen: aluetarkistus pieni tulos yhdellä sivulla (teksti ilman sivutusrivejä)");
+  const iso = { toimiala: "62100", postinumerot: ["00100", "00180", "00520"] };
+  const a1 = await kutsu("aluetarkistus", iso);
+  const a1s = a1.structuredContent;
+  const a1Rivit = a1.content[0].text.split("\n").filter((l) => l.startsWith("- ")).length;
+  check(
+    !a1.isError && a1s.sivu === 1 && a1s.yritykset.length === 100 && a1s.naytetty === 100 && a1s.katkaistu === false && a1s.sivuja === Math.ceil(a1s.yritykset_yhteensa / 100) && a1s.sivuja > 1 && a1s.seuraava === 2 && a1s.yritykset_yhteensa === a1s.yhteensa.yrityksia && a1Rivit === 100 && a1.content[0].text.includes(`Yritykset: sivu 1/${a1s.sivuja}, yritykset 1–100 / ${a1s.yritykset_yhteensa}:`) && a1.content[0].text.includes("Lisää yrityksiä: sivu 2.") && JSON.stringify(a1s).length < 60000,
+    `rakenteinen: aluetarkistus sivu 1 (100/${a1s?.yritykset_yhteensa} yritystä, ${a1s?.sivuja} sivua, rakenne ${JSON.stringify(a1s ?? {}).length} merkkiä)`,
+  );
+  const a2 = await kutsu("aluetarkistus", { ...iso, sivu: 2 });
+  const a2s = a2.structuredContent;
+  const ids1 = new Set(a1s.yritykset.map((x) => x.y_tunnus));
+  check(
+    !a2.isError && a2s.sivu === 2 && a2s.yritykset.length > 0 && a2s.yritykset.every((x) => !ids1.has(x.y_tunnus)) && JSON.stringify(a2s.postinumeroalueet) === JSON.stringify(a1s.postinumeroalueet) && a2s.yritykset_yhteensa === a1s.yritykset_yhteensa && a2.content[0].text.includes(`Yritykset: sivu 2/${a2s.sivuja}, yritykset 101–`),
+    "rakenteinen: aluetarkistus sivu 2 (eri yritykset, sama taulukko ja summa)",
+  );
+  const aYli = await kutsu("aluetarkistus", { ...iso, sivu: 99 });
+  const aYlis = aYli.structuredContent;
+  check(!aYli.isError && aYlis.sivu === 99 && aYlis.yritykset.length === 0 && aYlis.seuraava === null && aYlis.sivuja === a1s.sivuja && aYlis.naytetty === 0 && aYli.content[0].text.includes("Yrityslistassa ei ole sivua 99") && aYli.content[0].text.includes("Asukasta / yritys"), "rakenteinen: aluetarkistus sivu yli viimeisen (tyhjä lista, taulukko mukana)");
+  const aVirhe = await kutsu("aluetarkistus", { ...iso, sivu: "2" });
+  check(aVirhe.isError && aVirhe.content[0].text.startsWith("Syöte ei kelpaa") && !aVirhe.structuredContent, "rakenteinen: aluetarkistus sivu väärää tyyppiä on syötevirhe");
   const ht = await kutsu("hae_tilastoja", { hakusana: "väestö" });
   const hts = ht.structuredContent;
   check(
