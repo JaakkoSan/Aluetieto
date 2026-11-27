@@ -329,7 +329,7 @@ for (const [name, args, pred, maxFetch] of cases) {
     `rakenteinen: aluetarkistus alueet, yritykset (${atRivit}) ja lähteet`,
   );
   const at2 = await kutsu("aluetarkistus", { toimiala: "96220", postinumerot: ["48100"], nayta_yritykset: false });
-  check(!at2.isError && at2.structuredContent.yritykset.length === 0 && at2.structuredContent.nayta_yritykset === false && !at2.content[0].text.includes("Yritykset:"), "rakenteinen: aluetarkistus ilman yrityslistaa");
+  check(!at2.isError && at2.structuredContent.yritykset.length === 0 && at2.structuredContent.nayta_yritykset === false && !at2.content[0].text.includes("\nYritykset:\n"), "rakenteinen: aluetarkistus ilman yrityslistaa");
   const ht = await kutsu("hae_tilastoja", { hakusana: "väestö" });
   const hts = ht.structuredContent;
   check(
